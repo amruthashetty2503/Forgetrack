@@ -1,0 +1,187 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Canvas & Surfaces */
+    --bg-void:            #07070B;
+    --bg-canvas:          #0B0B11;
+    --bg-surface:         #111118;
+    --bg-surface-raised:  #16161F;
+    --bg-surface-inset:   #0E0E14;
+  
+    /* Borders */
+    --border-subtle:      rgba(255, 255, 255, 0.06);
+    --border-default:     rgba(255, 255, 255, 0.10);
+    --border-strong:      rgba(255, 255, 255, 0.16);
+  
+    /* Text */
+    --text-primary:       #F5F5F7;
+    --text-secondary:     #8A8A94;
+    --text-tertiary:      #52525B;
+    --text-inverse:       #0B0B11;
+  
+    /* Accent */
+    --accent-glow:        #6366F1;
+    --accent-glow-soft:   rgba(99, 102, 241, 0.15);
+  
+    /* Semantic */
+    --success-fg:         #10B981;
+    --success-bg:         rgba(16, 185, 129, 0.12);
+    --success-border:     rgba(16, 185, 129, 0.25);
+  
+    --danger-fg:          #F43F5E;
+    --danger-bg:          rgba(244, 63, 94, 0.12);
+    --danger-border:      rgba(244, 63, 94, 0.25);
+  
+    --warning-fg:         #F59E0B;
+    --warning-bg:         rgba(245, 158, 11, 0.12);
+    --warning-border:     rgba(245, 158, 11, 0.25);
+  
+    --info-fg:            #3B82F6;
+    --info-bg:            rgba(59, 130, 246, 0.12);
+    --info-border:        rgba(59, 130, 246, 0.25);
+
+    /* Fonts */
+    --font-display: 'Satoshi', 'Inter', system-ui, sans-serif;
+    --font-body:    'Inter', system-ui, sans-serif;
+    --font-mono:    'JetBrains Mono', 'SF Mono', monospace;
+
+    /* Shadows and Glows */
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border-subtle);
+    --shadow-raised: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--border-default);
+    --shadow-focus: 0 0 0 3px rgba(99, 102, 241, 0.25);
+    
+    --glow-cosmic: radial-gradient(
+      ellipse 600px 300px at 50% -100px,
+      rgba(99, 102, 241, 0.18),
+      rgba(99, 102, 241, 0) 70%
+    );
+    
+    --card-gradient: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.02) 0%,
+      rgba(255, 255, 255, 0) 50%
+    );
+
+    /* Spacing & Radii (using Tailwind defaults mostly, but defining explicit variables if needed) */
+    --space-1:   4px;
+    --space-2:   8px;
+    --space-3:   12px;
+    --space-4:   16px;
+    --space-5:   20px;
+    --space-6:   24px;
+    --space-8:   32px;
+    --space-10:  40px;
+    --space-12:  48px;
+    --space-16:  64px;
+    --space-20:  80px;
+    --space-24:  96px;
+
+    --radius-sm:    6px;
+    --radius-md:    10px;
+    --radius-lg:    14px;
+    --radius-xl:    18px;
+    --radius-2xl:   24px;
+    --radius-full:  9999px;
+  }
+
+  body {
+    background: var(--bg-void);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    margin: 0;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .app-main {
+    background-image: var(--glow-cosmic);
+    min-height: 100vh;
+  }
+
+  .card {
+    background: var(--bg-surface);
+    background-image: var(--card-gradient);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-card);
+    padding: var(--space-8);
+  }
+
+  .btn-primary {
+    background: var(--text-primary);
+    color: var(--text-inverse);
+    border-radius: var(--radius-md);
+    padding: 12px 20px;
+    font: 500 14px var(--font-body);
+    letter-spacing: -0.005em;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  
+  .btn-primary:hover { 
+    background: #E5E5E7; 
+  }
+
+  .btn-secondary {
+    background: var(--bg-surface-raised);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 12px 20px;
+    font: 500 14px var(--font-body);
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  
+  .btn-secondary:hover {
+    background: var(--bg-surface);
+  }
+
+  .input {
+    background: var(--bg-surface-inset);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+    color: var(--text-primary);
+    font: 400 14px var(--font-body);
+    height: 44px;
+    width: 100%;
+    outline: none;
+    box-sizing: border-box;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .input:focus {
+    border-color: var(--accent-glow);
+    box-shadow: var(--shadow-focus);
+  }
+
+  .input::placeholder { 
+    color: var(--text-tertiary); 
+  }
+
+  .pill {
+    display: inline-flex; 
+    align-items: center; 
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    font: 600 12px var(--font-body);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pill-success {
+    background: var(--success-bg);
+    color: var(--success-fg);
+    border: 1px solid var(--success-border);
+  }
+
+  .pill-danger {
+    background: var(--danger-bg);
+    color: var(--danger-fg);
+    border: 1px solid var(--danger-border);
+  }
+}
