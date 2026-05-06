@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Users, Calendar, AlertTriangle, TrendingUp, ArrowRight, CheckCircle } from 'lucide-react';
+import { Users, Calendar, AlertTriangle, TrendingUp, ArrowRight, CheckCircle, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState({
     totalStudents: 0,
     avgAttendance: 0,
     atRiskCount: 0,
-    recentSession: null
+    recentSession: null,
+    upcomingSessions: []
   });
   const [loading, setLoading] = useState(true);
 
@@ -41,11 +44,18 @@ export default function Dashboard() {
       
       const atRisk = Object.values(studentStats).filter(s => (s.attended / (sessions?.length || 1)) < 0.75).length;
 
+      const today = new Date().toISOString().split('T')[0];
+      const attendedSessionIds = new Set(attendance?.map(a => a.session_id) || []);
+      
+      const upcoming = sessions?.filter(s => s.date >= today && !attendedSessionIds.has(s.id)).reverse() || [];
+      const recent = sessions?.filter(s => s.date < today || attendedSessionIds.has(s.id))[0] || sessions?.[0] || null;
+
       setStats({
         totalStudents: studentCount || 0,
         avgAttendance: avg,
         atRiskCount: atRisk,
-        recentSession: sessions?.[0] || null
+        recentSession: recent,
+        upcomingSessions: upcoming.slice(0, 3) // Show top 3 upcoming
       });
     } catch (err) {
       console.error('Dashboard fetch error:', err);
@@ -64,13 +74,21 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-8 animate-in fade-in duration-700">
-      <div className="space-y-2">
-        <h2 className="text-display-sm text-primary">ForgeTrack Intelligence</h2>
-        <p className="text-body text-secondary">A birds-eye view of your cohort's performance and engagement.</p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-2">
+          <h2 className="text-display-sm text-primary">
+            Welcome back, <span className="text-accent-glow">{user?.user_metadata?.display_name || 'Mentor'}</span>
+          </h2>
+          <p className="text-body text-secondary">A birds-eye view of your cohort's performance and engagement.</p>
+        </div>
+        <div className="hidden md:block text-right">
+          <p className="text-micro text-tertiary uppercase tracking-widest">Role</p>
+          <p className="text-sm font-bold text-accent-glow">Lead Mentor</p>
+        </div>
       </div>
 
       {/* Primary Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="card bg-surface-raised border-subtle p-6 hover:border-accent-glow/30 transition-all">
           <div className="flex items-center justify-between mb-4">
             <div className="w-10 h-10 rounded-xl bg-accent-glow/10 flex items-center justify-center text-accent-glow">
@@ -93,34 +111,59 @@ export default function Dashboard() {
           <p className="text-xs text-tertiary mt-1">Across all sessions</p>
         </div>
 
-        <div className="card bg-surface-raised border-subtle p-6 hover:border-rose-500/30 transition-all">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-500">
-              <AlertTriangle size={20} />
-            </div>
-            <span className="text-[10px] font-bold text-tertiary uppercase tracking-widest">At Risk</span>
-          </div>
-          <p className="text-3xl font-bold text-primary">{stats.atRiskCount}</p>
-          <p className="text-xs text-tertiary mt-1">Below 75% threshold</p>
-        </div>
 
-        <div className="card bg-surface-raised border-accent-glow/20 p-6 shadow-[0_8px_32px_rgba(99,102,241,0.1)]">
+        <div className="card bg-surface-raised border-accent-glow/20 p-6 shadow-[0_8px_32px_rgba(99,102,241,0.1)] flex flex-col justify-between">
           <div className="flex items-center justify-between mb-4">
             <div className="w-10 h-10 rounded-xl bg-accent-glow flex items-center justify-center text-white">
               <Calendar size={20} />
             </div>
-            <span className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Next Step</span>
+            <span className="text-[10px] font-bold text-tertiary uppercase tracking-widest">Quick Link</span>
           </div>
-          <button 
-            onClick={() => navigate('/attendance')}
-            className="flex items-center gap-2 text-sm font-bold text-primary hover:text-accent-glow transition-colors"
-          >
-            Mark Attendance <ArrowRight size={14} />
-          </button>
+          <div className="space-y-3">
+            <button 
+              onClick={() => navigate('/attendance')}
+              className="w-full btn-primary text-xs py-2"
+            >
+              Take Attendance
+            </button>
+            <button 
+              onClick={() => navigate('/sessions')}
+              className="w-full btn-secondary text-xs py-2"
+            >
+              Schedule Class
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Upcoming Sessions Reminder */}
+        <div className="lg:col-span-3 card bg-void border-accent-glow/20 p-6 relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-accent-glow/5 rounded-full blur-[100px] -mr-48 -mt-48" />
+          <div className="relative flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-accent-glow flex items-center justify-center text-white shadow-[0_0_20px_rgba(99,102,241,0.4)] group-hover:scale-110 transition-transform">
+                <Clock size={24} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-primary">Upcoming Schedule Reminder</h3>
+                <p className="text-sm text-secondary">You have {stats.upcomingSessions.length} sessions planned for this week.</p>
+              </div>
+            </div>
+            <div className="flex gap-4 overflow-x-auto pb-2 md:pb-0 w-full md:w-auto">
+              {stats.upcomingSessions.length > 0 ? stats.upcomingSessions.map(s => (
+                <div key={s.id} className="min-w-[200px] p-4 rounded-xl bg-surface-raised border border-subtle hover:border-accent-glow/50 transition-all">
+                  <p className="text-[10px] font-bold text-accent-glow uppercase tracking-widest mb-1">{s.date}</p>
+                  <p className="text-sm font-bold text-primary line-clamp-1">{s.topic}</p>
+                  <p className="text-[10px] text-tertiary mt-1 capitalize">{s.session_type} • {s.duration_hours}h</p>
+                </div>
+              )) : (
+                <p className="text-sm text-tertiary italic">No upcoming sessions scheduled.</p>
+              )}
+            </div>
+            <button onClick={() => navigate('/sessions')} className="btn-secondary whitespace-nowrap">View All</button>
+          </div>
+        </div>
         {/* Recent Session */}
         <div className="lg:col-span-2 card bg-surface-raised border-subtle p-8 space-y-6">
           <div className="flex justify-between items-center">
@@ -162,15 +205,6 @@ export default function Dashboard() {
               <div>
                 <p className="text-sm font-bold text-primary">Import Batch Data</p>
                 <p className="text-xs text-tertiary">New CSV records available for Month 6.</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-4 p-4 rounded-xl bg-surface-inset border border-subtle hover:border-emerald-500/30 transition-all cursor-pointer group" onClick={() => navigate('/history')}>
-              <div className="mt-1">
-                <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-primary">Check Low Attendance</p>
-                <p className="text-xs text-tertiary">{stats.atRiskCount} students need intervention.</p>
               </div>
             </div>
             <div className="flex items-start gap-4 p-4 rounded-xl bg-surface-inset border border-subtle hover:border-amber-500/30 transition-all cursor-pointer group" onClick={() => navigate('/materials')}>

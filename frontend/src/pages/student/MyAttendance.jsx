@@ -43,10 +43,13 @@ export default function MyAttendance() {
       const attMap = {};
       attRecords?.forEach(r => attMap[r.session_id] = r.present);
 
-      const combined = sessions.map(s => ({
-        ...s,
-        present: attMap[s.id] ?? null // null means not marked yet
-      }));
+      const today = new Date().toISOString().split('T')[0];
+      const combined = sessions
+        .filter(s => s.date <= today || attMap[s.id] !== undefined)
+        .map(s => ({
+          ...s,
+          present: attMap[s.id] ?? null // null means not marked yet
+        }));
 
       setAttendance(combined);
       

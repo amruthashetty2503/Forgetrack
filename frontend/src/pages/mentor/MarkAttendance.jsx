@@ -11,6 +11,9 @@ export default function MarkAttendance() {
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [newTopic, setNewTopic] = useState('');
+  const [creatingSession, setCreatingSession] = useState(false);
+  const today = new Date().toISOString().split('T')[0];
 
   useEffect(() => {
     fetchInitialData();
@@ -33,7 +36,14 @@ export default function MarkAttendance() {
 
       if (sessionError) throw sessionError;
       setSessions(sessionData);
-      if (sessionData.length > 0) setSelectedSession(sessionData[0]);
+      
+      // Auto-select today's session or the most recent one
+      const todaySession = sessionData.find(s => s.date === today);
+      if (todaySession) {
+        setSelectedSession(todaySession);
+      } else if (sessionData.length > 0) {
+        setSelectedSession(sessionData[0]);
+      }
 
       // Fetch students
       const { data: studentData, error: studentError } = await supabase
@@ -67,6 +77,47 @@ export default function MarkAttendance() {
       setAttendance(attMap);
     } catch (err) {
       console.error('Error fetching attendance:', err);
+    }
+  };
+
+  const createTodaySession = async () => {
+    if (!newTopic.trim()) {
+      setMessage({ type: 'error', text: 'Please enter a topic for today' });
+      return;
+    }
+
+    setCreatingSession(true);
+    try {
+      // Calculate month_number
+      const sessionDate = new Date(today);
+      const year = sessionDate.getFullYear();
+      const month = sessionDate.getMonth() + 1;
+      const monthNumber = ((year - 2025) * 12 + month - 8) + 1;
+
+      const { data, error } = await supabase
+        .from('sessions')
+        .insert([{
+          date: today,
+          topic: newTopic,
+          month_number: monthNumber,
+          duration_hours: 2,
+          session_type: 'offline'
+        }])
+        .select();
+
+      if (error) throw error;
+
+      const newSession = data[0];
+      setSessions([newSession, ...sessions]);
+      setSelectedSession(newSession);
+      setNewTopic('');
+      setMessage({ type: 'success', text: 'Session created for today!' });
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+    } catch (err) {
+      console.error('Error creating session:', err);
+      setMessage({ type: 'error', text: err.message.includes('unique constraint') ? 'A session already exists for today.' : 'Failed to create session' });
+    } finally {
+      setCreatingSession(false);
     }
   };
 
@@ -141,7 +192,7 @@ export default function MarkAttendance() {
           </div>
           <h2 className="text-display-sm text-primary">Mark Attendance</h2>
           
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-1.5">
               <label className="text-label text-secondary">Select Session</label>
               <select 
@@ -149,11 +200,40 @@ export default function MarkAttendance() {
                 value={selectedSession?.id || ''}
                 onChange={(e) => setSelectedSession(sessions.find(s => s.id === parseInt(e.target.value)))}
               >
+                {!sessions.find(s => s.date === today) && (
+                  <option value="" disabled>-- Create today's session first --</option>
+                )}
                 {sessions.map(s => (
-                  <option key={s.id} value={s.id}>{s.date}: {s.topic}</option>
+                  <option key={s.id} value={s.id}>
+                    {s.date === today ? '🌟 TODAY: ' : ''}{s.date}: {s.topic}
+                  </option>
                 ))}
               </select>
             </div>
+
+            {(!selectedSession || selectedSession.date !== today) && !sessions.find(s => s.date === today) && (
+              <div className="flex gap-2 animate-in slide-in-from-left duration-500">
+                <div className="space-y-1.5">
+                  <label className="text-label text-accent-glow">Today's Subject</label>
+                  <input 
+                    type="text" 
+                    placeholder="Enter topic for today..."
+                    className="input w-64 border-accent-glow/50"
+                    value={newTopic}
+                    onChange={(e) => setNewTopic(e.target.value)}
+                  />
+                </div>
+                <button 
+                  onClick={createTodaySession}
+                  disabled={creatingSession}
+                  className="btn-primary h-[42px] mt-auto"
+                >
+                  {creatingSession ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/20 border-t-white" />
+                  ) : 'Start Today'}
+                </button>
+              </div>
+            )}
             
             <div className="space-y-1.5">
               <label className="text-label text-secondary">Search Student</label>

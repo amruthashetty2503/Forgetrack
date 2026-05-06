@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { LayoutDashboard, CheckSquare, Clock, FileText, Upload, LogOut } from 'lucide-react';
+import { LayoutDashboard, CheckSquare, Clock, FileText, Upload, LogOut, Calendar } from 'lucide-react';
 
 export default function Sidebar() {
   const { role, signOut } = useAuth();
@@ -14,6 +14,7 @@ export default function Sidebar() {
       { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={18} /> }
     ]},
     { section: 'ACTIVITY', items: [
+      { name: 'Schedule Manager', path: '/sessions', icon: <Calendar size={18} /> },
       { name: 'Mark Attendance', path: '/attendance', icon: <CheckSquare size={18} /> },
       { name: 'Student History', path: '/history', icon: <Clock size={18} /> },
       { name: 'Materials', path: '/materials', icon: <FileText size={18} /> }
@@ -23,6 +24,7 @@ export default function Sidebar() {
     ]}
   ] : [
     { section: 'OVERVIEW', items: [
+      { name: 'Dashboard', path: '/me/dashboard', icon: <LayoutDashboard size={18} /> },
       { name: 'My Attendance', path: '/me/attendance', icon: <CheckSquare size={18} /> },
       { name: 'Upcoming Sessions', path: '/me/upcoming', icon: <Clock size={18} /> },
       { name: 'Class Materials', path: '/me/materials', icon: <FileText size={18} /> }

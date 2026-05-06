@@ -16,7 +16,7 @@ export default function Login() {
   React.useEffect(() => {
     if (user && role && !authLoading) {
       if (role === 'mentor') navigate('/dashboard');
-      else if (role === 'student') navigate('/me/attendance');
+      else if (role === 'student') navigate('/me/dashboard');
     }
   }, [user, role, authLoading, navigate]);
 
@@ -56,7 +56,7 @@ export default function Login() {
     if (tab === 'student' && identifier.toUpperCase().startsWith('4SH') && password.toUpperCase() === identifier.toUpperCase()) {
       console.log('Student Bypass Triggered for', identifier);
       await loginAsDemo('student', `${identifier.toLowerCase()}@forge.local`);
-      navigate('/me/attendance');
+      navigate('/me/dashboard');
       return;
     }
 

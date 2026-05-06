@@ -10,9 +10,11 @@ import MarkAttendance from './pages/mentor/MarkAttendance';
 import StudentHistory from './pages/mentor/StudentHistory';
 import Materials from './pages/mentor/Materials';
 import UploadCSV from './pages/mentor/UploadCSV';
+import SessionManager from './pages/mentor/SessionManager';
 import MyAttendance from './pages/student/MyAttendance';
 import StudentMaterials from './pages/student/StudentMaterials';
 import UpcomingSessions from './pages/student/UpcomingSessions';
+import StudentDashboard from './pages/student/StudentDashboard';
 import DevTokens from './DevTokens'; // Keep this just in case
 
 function App() {
@@ -27,7 +29,7 @@ function App() {
         {/* Redirect root based on role */}
         <Route path="/" element={
           <RoleGuard>
-            {role === 'mentor' ? <Navigate to="/dashboard" replace /> : <Navigate to="/me/attendance" replace />}
+            {role === 'mentor' ? <Navigate to="/dashboard" replace /> : <Navigate to="/me/dashboard" replace />}
           </RoleGuard>
         } />
 
@@ -38,6 +40,7 @@ function App() {
           </RoleGuard>
         }>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/sessions" element={<SessionManager />} />
           <Route path="/attendance" element={<MarkAttendance />} />
           <Route path="/history" element={<StudentHistory />} />
           <Route path="/materials" element={<Materials />} />
@@ -50,6 +53,7 @@ function App() {
             <MainLayout />
           </RoleGuard>
         }>
+          <Route path="/me/dashboard" element={<StudentDashboard />} />
           <Route path="/me/attendance" element={<MyAttendance />} />
           <Route path="/me/upcoming" element={<UpcomingSessions />} />
           <Route path="/me/materials" element={<StudentMaterials />} />
