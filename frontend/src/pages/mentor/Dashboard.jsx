@@ -127,7 +127,7 @@ export default function Dashboard() {
               Take Attendance
             </button>
             <button 
-              onClick={() => navigate('/sessions')}
+              onClick={() => navigate('/attendance')}
               className="w-full btn-secondary text-xs py-2"
             >
               Schedule Class
@@ -161,7 +161,7 @@ export default function Dashboard() {
                 <p className="text-sm text-tertiary italic">No upcoming sessions scheduled.</p>
               )}
             </div>
-            <button onClick={() => navigate('/sessions')} className="btn-secondary whitespace-nowrap">View All</button>
+            <button onClick={() => navigate('/attendance')} className="btn-secondary whitespace-nowrap">View All</button>
           </div>
         </div>
         {/* Recent Session */}

@@ -14,7 +14,6 @@ export default function Sidebar() {
       { name: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={18} /> }
     ]},
     { section: 'ACTIVITY', items: [
-      { name: 'Schedule Manager', path: '/sessions', icon: <Calendar size={18} /> },
       { name: 'Mark Attendance', path: '/attendance', icon: <CheckSquare size={18} /> },
       { name: 'Student History', path: '/history', icon: <Clock size={18} /> },
       { name: 'Materials', path: '/materials', icon: <FileText size={18} /> }
@@ -32,7 +31,7 @@ export default function Sidebar() {
   ];
 
   return (
-    <aside className="w-64 bg-void border-r border-strong flex flex-col h-screen fixed left-0 top-0 z-20">
+    <aside className="hidden md:flex w-56 lg:w-64 bg-void border-r border-strong flex flex-col h-screen fixed left-0 top-0 z-20">
       <div className="p-6 border-b border-subtle flex items-center gap-3">
         <div className="w-8 h-8 rounded-lg bg-accent-glow flex items-center justify-center text-white font-bold">
           F

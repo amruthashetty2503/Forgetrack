@@ -40,7 +40,6 @@ function App() {
           </RoleGuard>
         }>
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/sessions" element={<SessionManager />} />
           <Route path="/attendance" element={<MarkAttendance />} />
           <Route path="/history" element={<StudentHistory />} />
           <Route path="/materials" element={<Materials />} />

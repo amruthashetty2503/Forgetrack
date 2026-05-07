@@ -1,260 +1,813 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import Papa from 'papaparse';
-import { Upload, FileType, CheckCircle, AlertCircle, ArrowRight, Loader2, Table } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import {
+  Upload, CheckCircle, AlertTriangle, ArrowRight,
+  Loader2, Table, Calendar, Settings, Sparkles, X, Info
+} from 'lucide-react';
+import { genAI } from '../../lib/gemini';
+
+const MODEL_NAME = "gemini-2.5-flash-lite";
 
 export default function UploadCSV() {
-  const [step, setStep] = useState(1); // 1: Select, 2: Map, 3: Import
-  const [fileData, setFileData] = useState([]);
-  const [headers, setHeaders] = useState([]);
-  const [mapping, setMapping] = useState({ usn: '', name: '' });
-  const [dateColumns, setDateColumns] = useState([]);
+  // ── Wizard state ──────────────────────────────────────────────────────────────
+  const [step, setStep] = useState(1);           // 1=upload 2=pickHeader 3=mapCols 4=result
   const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState({ total: 0, imported: 0, failed: 0 });
+  const [statusMsg, setStatusMsg] = useState('');
+  const [stats, setStats] = useState({ imported: 0, failed: 0, warnings: [] });
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  // ── File / sheet data ─────────────────────────────────────────────────────────
+  const [workbook, setWorkbook] = useState(null);
+  const [selectedSheet, setSelectedSheet] = useState(null);
+  const [rawRows, setRawRows] = useState([]);    // All rows from sheet as arrays
+  const [headerRowIdx, setHeaderRowIdx] = useState(null); // Which row index is the header
+  const [headers, setHeaders] = useState([]);    // String[] from chosen header row
+  const [dataRows, setDataRows] = useState([]);  // Rows AFTER the header row
 
-    setLoading(true);
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        setFileData(results.data);
-        const cols = Object.keys(results.data[0] || {});
-        setHeaders(cols);
-        
-        // Try to auto-map
-        const usnCol = cols.find(c => c.toLowerCase().includes('usn'));
-        const nameCol = cols.find(c => c.toLowerCase().includes('name'));
-        setMapping({ usn: usnCol || '', name: nameCol || '' });
-        
-        // Find date columns (roughly)
-        const dateCols = cols.filter(c => /\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}/.test(c) || c.toLowerCase().includes('date'));
-        setDateColumns(dateCols);
-        
-        setStep(2);
-        setLoading(false);
-      },
-      error: (err) => {
-        alert('Failed to parse CSV: ' + err.message);
-        setLoading(false);
+  // ── Mapping state ─────────────────────────────────────────────────────────────
+  const [mapping, setMapping] = useState({ usn: '', name: '', branch: '', email: '' });
+  const [sessionCols, setSessionCols] = useState([]); // [{col, date}]
+  const [programStart, setProgramStart] = useState('2025-08-04');
+  const [typicalDays, setTypicalDays] = useState(['Monday', 'Wednesday', 'Friday']);
+
+  // ── Step 1: File Upload ────────────────────────────────────────────────────────
+  // Helper: parse a date string like "30/04/26", "18-09-25", or a JS Date serial into YYYY-MM-DD
+  const parseHeaderDate = (val) => {
+    if (!val) return null;
+    let d = null;
+    if (val instanceof Date || (typeof val === 'object' && val.getFullYear)) {
+      d = new Date(val);
+    } else {
+      const str = val.toString().trim();
+      const m1 = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+      if (m1) {
+        let [, day, month, year] = m1;
+        if (year.length === 2) year = '20' + year;
+        d = new Date(`${year}-${month.padStart(2,'0')}-${day.padStart(2,'0')}`);
       }
-    });
+    }
+
+    if (d && !isNaN(d.getTime())) {
+      return d.toISOString().slice(0, 10);
+    }
+    return null;
   };
 
+  const isDateInRange = (iso) => {
+    return iso >= '2025-08-04' && iso <= '2025-12-31';
+  };
+
+  const handleFileUpload = useCallback((e) => {
+    const file = e.target.files?.[0] || e.dataTransfer?.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const wb = XLSX.read(evt.target.result, { type: 'binary', cellDates: true });
+      setWorkbook(wb);
+      // If multiple sheets, go to sheet selector; otherwise load first sheet directly
+      if (wb.SheetNames.length > 1) {
+        setStep(1.5); // sheet picker step
+      } else {
+        loadSheet(wb, wb.SheetNames[0]);
+      }
+    };
+    reader.readAsBinaryString(file);
+  }, []);
+
+  const loadSheet = (wb, sheetName) => {
+    setSelectedSheet(sheetName);
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    // raw:false converts dates to strings; but we also read with cellDates:true above
+    // Re-read with raw:true to get actual Date objects for date cells
+    const rowsRaw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    setRawRows(rowsRaw);
+
+    const keywords = ['usn', 'name', 'email', 'branch', 'sl'];
+    const autoIdx = rowsRaw.findIndex(row =>
+      row.some(cell => keywords.includes(cell?.toString().toLowerCase().trim()))
+    );
+    setHeaderRowIdx(autoIdx >= 0 ? autoIdx : null);
+    setStep(2);
+  };
+
+  const confirmHeaderRow = (idx) => {
+    const hRow = rawRows[idx] || [];
+    const seen = {};
+    const hdrs = hRow.map((h, i) => {
+      const base = h?.toString().trim() || `Col_${i + 1}`;
+      if (!seen[base]) { seen[base] = 1; return base; }
+      seen[base]++;
+      return `${base}_${seen[base]}`;
+    });
+    setHeaders(hdrs);
+    setHeaderRowIdx(idx);
+    const data = rawRows.slice(idx + 1).filter(r =>
+      r.some(c => c !== '' && c !== null && c !== undefined)
+    );
+    setDataRows(data);
+
+    // Auto-detect sessions: columns whose header parses to a date
+    const autoSessions = [];
+    rawRows[idx].forEach((h, i) => {
+      const date = parseHeaderDate(h);
+      if (date && isDateInRange(date)) {
+        const colName = hdrs[i];
+        autoSessions.push({ col: colName, date });
+      }
+    });
+    if (autoSessions.length > 0) {
+      setSessionCols(autoSessions);
+    } else {
+      setSessionCols([]);
+    }
+
+    const m = { usn: '', name: '', branch: '', email: '' };
+    hdrs.forEach(h => {
+      const lower = h.toLowerCase();
+      if (lower.includes('usn') || lower.includes('id')) m.usn = h;
+      if (lower.includes('name') || lower.includes('student name')) m.name = h;
+      if (lower.includes('branch') || lower.includes('dept')) m.branch = h;
+      if (lower.includes('email') || lower.includes('mail')) m.email = h;
+    });
+    setMapping(m);
+
+    setStep(3);
+    runAiAnalysis(hdrs, data.slice(0, 5));
+  };
+
+
+  // Only columns whose header contains "attendance" (case-insensitive)
+  const attendanceCols = React.useMemo(() => {
+    if (!headers.length) return [];
+    return headers.filter(h =>
+      h?.toLowerCase().includes('attendance')
+    );
+  }, [headers]);
+
+  // ── AI Analysis ───────────────────────────────────────────────────────────────
+  const runAiAnalysis = async (hdrs, sampleData) => {
+    setLoading(true);
+    setStatusMsg('AI is mapping your columns...');
+    try {
+      const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+      const prompt = `
+You are analyzing a student attendance spreadsheet.
+Headers: ${JSON.stringify(hdrs)}
+Sample rows (first 5): ${JSON.stringify(sampleData)}
+Program start date: ${programStart}
+Typical class days: ${typicalDays.join(', ')}
+
+Tasks:
+1. Find which header contains the student USN/ID (like "4SF24CI005").
+2. Find which header contains the student Name.
+3. Find which header contains the Branch/Department code.
+4. Find all headers that represent attendance dates/sessions (columns with P/A/1/0 values).
+   For each, determine the date in YYYY-MM-DD format.
+
+Return ONLY valid JSON:
+{
+  "usn": "exact header string",
+  "name": "exact header string", 
+  "branch": "exact header string",
+  "sessions": [
+    { "col": "exact header string", "date": "YYYY-MM-DD" }
+  ],
+  "reasoning": "brief explanation"
+}`;
+
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+      const cleaned = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+
+      setMapping({ 
+        usn: parsed.usn || '', 
+        name: parsed.name || '', 
+        branch: parsed.branch || '',
+        email: parsed.email || '' 
+      });
+      
+      // Filter AI sessions to only include actual valid columns
+      const validAiSessions = (parsed.sessions || []).filter(s => 
+        headers.includes(s.col) && isDateInRange(s.date)
+      );
+      
+      // If AI found sessions, use them. Otherwise, fall back to autoSessions from date parsing
+      if (validAiSessions.length > 0) {
+        setSessionCols(validAiSessions);
+      }
+    } catch (err) {
+      console.warn('AI mapping failed:', err);
+      setMapping({ usn: '', name: '', branch: '' });
+    } finally {
+      setLoading(false);
+      setStatusMsg('');
+    }
+  };
+
+  // ── Step 3: Sync attendance ───────────────────────────────────────────────────
   const startImport = async () => {
     setLoading(true);
-    let imported = 0;
-    let failed = 0;
+    setStatusMsg('Syncing with database...');
+    let imported = 0, failed = 0;
+    const warnings = [];
 
     try {
-      // 1. Get all students to map IDs
-      const { data: students } = await supabase.from('students').select('id, usn');
-      const usnToId = {};
-      students.forEach(s => usnToId[s.usn.toUpperCase()] = s.id);
+      // ── 1. Collect all valid rows (including those without USN if they have attendance) ────────────────
+      const usnColIdx = headers.indexOf(mapping.usn);
+      const nameColIdx = headers.indexOf(mapping.name);
+      const branchColIdx = headers.indexOf(mapping.branch);
+      const emailColIdx = headers.indexOf(mapping.email);
 
-      // 2. Process each row
-      for (const row of fileData) {
-        const usn = row[mapping.usn]?.toString()?.trim()?.toUpperCase();
-        const studentId = usnToId[usn];
+      const validRows = dataRows.filter(row => {
+        const usn = row[usnColIdx]?.toString().trim();
+        if (usn) return true;
+        
+        // If no USN, check if they have name AND at least one marked attendance
+        const name = row[nameColIdx]?.toString().trim();
+        if (!name) return false;
+        
+        const hasAttendance = sessionCols.some(({ col }) => {
+          const colIdx = headers.indexOf(col);
+          const val = row[colIdx];
+          return val === true || val === 1 || 
+            ['p', '1', 'present', 'true', 'yes'].includes(val?.toString().toLowerCase().trim());
+        });
+        
+        return hasAttendance;
+      });
 
-        if (!studentId) {
-          failed++;
-          continue;
+      // Map USNs (and generate temporary ones for those without)
+      const rowToUsn = validRows.map((row, ri) => {
+        let usn = row[usnColIdx]?.toString().trim().toUpperCase();
+        if (!usn) {
+          const name = row[nameColIdx]?.toString().trim() || 'UNKNOWN';
+          const email = emailColIdx !== -1 ? row[emailColIdx]?.toString().trim() : '';
+          const emailPrefix = email ? email.split('@')[0] : `R${ri}`;
+          // Generate a deterministic temporary USN including row index for uniqueness
+          usn = `TBD_${name.replace(/\s+/g, '_')}_${emailPrefix}`.toUpperCase();
         }
+        return usn;
+      });
 
-        // 3. Process each date column
-        for (const dateCol of dateColumns) {
-          const present = row[dateCol]?.toString()?.trim()?.toLowerCase() === 'p' || 
-                          row[dateCol]?.toString()?.trim() === '1' ||
-                          row[dateCol]?.toString()?.trim()?.toLowerCase() === 'present';
-          
-          if (present) {
-            // Find or create session for this date
-            // For the demo, we'll just insert into attendance directly 
-            // assuming sessions exist or skip if they don't
-            const { data: session } = await supabase
-              .from('sessions')
-              .select('id')
-              .eq('date', dateCol) // This assumes the column header IS the date YYYY-MM-DD
-              .single();
+      const fileUSNs = [...new Set(rowToUsn)];
 
-            if (session) {
-              await supabase.from('attendance').upsert({
-                student_id: studentId,
-                session_id: session.id,
-                present: true,
-                marked_by: 'CSV Import'
-              }, { onConflict: 'student_id,session_id' });
-              imported++;
-            }
+      // ── 2. Fetch existing students in one query ────────────────────────────────
+      setStatusMsg('Fetching existing students...');
+      const { data: existingStudents } = await supabase
+        .from('students').select('id, usn').in('usn', fileUSNs);
+      const usnMap = {};
+      existingStudents?.forEach(s => { usnMap[s.usn.toUpperCase()] = s.id; });
+
+      // ── 3. Batch-create missing students & Sync emails ───────────────────────
+      const missingUSNs = fileUSNs.filter(u => !usnMap[u]);
+      if (missingUSNs.length > 0) {
+        setStatusMsg(`Creating ${missingUSNs.length} new students...`);
+        const newStudents = missingUSNs.map(usn => {
+          const rowIndex = rowToUsn.indexOf(usn);
+          const row = validRows[rowIndex];
+          return {
+            usn,
+            name: row?.[nameColIdx]?.toString().trim() || usn,
+            email: (emailColIdx !== -1 && row?.[emailColIdx]) ? row[emailColIdx].toString().trim() : null,
+            branch_code: row?.[branchColIdx]?.toString().trim() || 'N/A',
+          };
+        });
+
+        // Insert in chunks of 100
+        for (let i = 0; i < newStudents.length; i += 100) {
+          const chunk = newStudents.slice(i, i + 100);
+          const { data: created, error } = await supabase
+            .from('students').insert(chunk).select('id, usn');
+          if (error) {
+            warnings.push(`Student batch create error: ${error.message}`);
+          } else {
+            created?.forEach(s => { usnMap[s.usn.toUpperCase()] = s.id; });
           }
         }
       }
 
-      setStats({ total: fileData.length, imported, failed });
-      setStep(3);
+      // Sync emails for existing students if email mapping is provided
+      if (mapping.email && emailColIdx !== -1) {
+        setStatusMsg('Syncing student emails...');
+        const studentsToUpdate = [];
+        existingStudents?.forEach(s => {
+          const usn = s.usn.toUpperCase();
+          const rowIndex = rowToUsn.indexOf(usn);
+          if (rowIndex !== -1) {
+             const fileEmail = validRows[rowIndex][emailColIdx]?.toString().trim();
+             if (fileEmail) {
+                studentsToUpdate.push({ usn, email: fileEmail });
+             }
+          }
+        });
+        
+        if (studentsToUpdate.length > 0) {
+          setStatusMsg(`Updating ${studentsToUpdate.length} emails...`);
+          const { error } = await supabase.from('students').upsert(studentsToUpdate, { onConflict: 'usn' });
+          if (error) warnings.push(`Email sync error: ${error.message}`);
+        }
+      }
+
+      // ── 4. Create all sessions at once ────────────────────────────────────────
+      const validSessions = sessionCols.filter(s => s.col && s.date);
+      if (validSessions.length === 0) {
+        warnings.push('No valid session columns with dates were configured.');
+        setStats({ imported: 0, failed: validRows.length, warnings });
+        setStep(4); return;
+      }
+
+      setStatusMsg('Creating sessions...');
+      const allDates = [...new Set(validSessions.map(s => s.date))];
+      const { data: existingSessions } = await supabase
+        .from('sessions').select('id, date').in('date', allDates);
+      const dateToSessionId = {};
+      existingSessions?.forEach(s => { dateToSessionId[s.date] = s.id; });
+
+      const missingDates = allDates.filter(d => !dateToSessionId[d]);
+      if (missingDates.length > 0) {
+        const newSessions = missingDates.map(d => {
+          const year = new Date(d).getFullYear();
+          const month = new Date(d).getMonth() + 1;
+          const monthNumber = ((year - 2025) * 12 + month - 8) + 1;
+          return {
+            date: d,
+            topic: `Imported: ${d}`,
+            month_number: monthNumber,
+          };
+        });
+        const { data: created, error } = await supabase
+          .from('sessions').insert(newSessions).select('id, date');
+        if (error) warnings.push(`Session create error: ${error.message}`);
+        created?.forEach(s => { dateToSessionId[s.date] = s.id; });
+      }
+
+      // ── 5. Build all attendance records ───────────────────────────────────────
+      setStatusMsg('Building attendance records...');
+      const attendanceRecords = [];
+
+      for (let ri = 0; ri < validRows.length; ri++) {
+        const row = validRows[ri];
+        const usn = rowToUsn[ri];
+        const studentId = usnMap[usn];
+        if (!studentId) { failed++; continue; }
+
+        for (const { col, date } of validSessions) {
+          const sessionId = dateToSessionId[date];
+          if (!sessionId) continue;
+
+          const colIdx = headers.indexOf(col);
+          const val = row[colIdx];
+          // Handle boolean TRUE/FALSE from Excel, numbers (1/0), and text (P/A)
+          const isPresent = val === true || val === 1 ||
+            ['p', '1', 'present', 'true', 'yes'].includes(val?.toString().toLowerCase().trim());
+
+          attendanceRecords.push({
+            student_id: studentId,
+            session_id: sessionId,
+            present: isPresent,
+            marked_by: 'Bulk Upload',
+          });
+          if (isPresent) imported++;
+        }
+      }
+
+      // ── 6. Batch upsert attendance in chunks of 500 ───────────────────────────
+      setStatusMsg(`Saving ${attendanceRecords.length} attendance records...`);
+      for (let i = 0; i < attendanceRecords.length; i += 500) {
+        const chunk = attendanceRecords.slice(i, i + 500);
+        const { error } = await supabase.from('attendance')
+          .upsert(chunk, { onConflict: 'student_id,session_id' });
+        if (error) warnings.push(`Attendance batch error: ${error.message}`);
+        setStatusMsg(`Saving records... ${Math.min(i + 500, attendanceRecords.length)}/${attendanceRecords.length}`);
+      }
+
+      setStats({ imported, failed, warnings });
+      setStep(4);
     } catch (err) {
-      alert('Import failed: ' + err.message);
+      console.error(err);
+      warnings.push(`Fatal error: ${err.message}`);
+      setStats({ imported, failed, warnings });
+      setStep(4);
     } finally {
       setLoading(false);
+      setStatusMsg('');
     }
   };
 
+  // ── Reset ──────────────────────────────────────────────────────────────────────
+  const reset = () => {
+    setStep(1);
+    setWorkbook(null); setSelectedSheet(null); setRawRows([]); setHeaders([]); setDataRows([]);
+    setMapping({ usn: '', name: '', branch: '' }); setSessionCols([]);
+    setStats({ imported: 0, failed: 0, warnings: [] });
+    setHeaderRowIdx(null);
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────────
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-8">
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 text-accent-glow">
-          <Upload size={20} />
-          <span className="text-sm font-semibold tracking-wider uppercase">Data Management</span>
-        </div>
-        <h2 className="text-display-sm text-primary">Bulk Import Attendance</h2>
-        <p className="text-body text-secondary">Upload an Excel/CSV file to sync attendance for multiple students and dates.</p>
+    <div className="p-8 space-y-8 max-w-7xl mx-auto">
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold text-primary">Bulk Upload CSV</h1>
+        <p className="text-secondary mt-1">Import student attendance from Excel / CSV</p>
       </div>
 
-      {/* Step Indicator */}
-      <div className="flex items-center justify-between px-8 py-4 bg-surface-inset rounded-2xl border border-subtle">
-        {[1, 2, 3].map((s) => (
-          <React.Fragment key={s}>
-            <div className="flex flex-col items-center gap-2">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${
-                step >= s ? 'bg-accent-glow text-white' : 'bg-surface border border-subtle text-tertiary'
+      {/* Progress */}
+      <div className="flex items-center gap-3">
+        {['Upload File', 'Select Header Row', 'Map & Sync', 'Done'].map((label, i) => (
+          <React.Fragment key={i}>
+            <div className={`flex items-center gap-2 ${step > i + 1 ? 'text-emerald-400' : step === i + 1 ? 'text-accent-glow' : 'text-tertiary'}`}>
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
+                step > i + 1 ? 'border-emerald-400 bg-emerald-400/10' :
+                step === i + 1 ? 'border-accent-glow bg-accent-glow/10' : 'border-subtle'
               }`}>
-                {step > s ? <CheckCircle size={20} /> : s}
+                {step > i + 1 ? <CheckCircle size={14} /> : i + 1}
               </div>
-              <span className={`text-[10px] font-bold uppercase tracking-widest ${step >= s ? 'text-primary' : 'text-tertiary'}`}>
-                {s === 1 ? 'Select' : s === 2 ? 'Map' : 'Result'}
-              </span>
+              <span className="text-xs font-medium hidden sm:block">{label}</span>
             </div>
-            {s < 3 && <div className={`flex-1 h-px mx-4 ${step > s ? 'bg-accent-glow' : 'bg-subtle'}`} />}
+            {i < 3 && <div className={`flex-1 h-px ${step > i + 1 ? 'bg-emerald-400/40' : 'bg-subtle'}`} />}
           </React.Fragment>
         ))}
       </div>
 
-      {/* Step 1: Select File */}
+      {/* ── Step 1: Upload ── */}
       {step === 1 && (
-        <div className="group relative border-2 border-dashed border-subtle hover:border-accent-glow/50 rounded-3xl p-20 transition-all cursor-pointer bg-surface/50">
-          <input 
-            type="file" 
-            accept=".csv" 
-            onChange={handleFileUpload}
-            className="absolute inset-0 opacity-0 cursor-pointer z-10"
-          />
-          <div className="flex flex-col items-center text-center space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-surface-raised flex items-center justify-center text-tertiary group-hover:text-accent-glow group-hover:scale-110 transition-all duration-500">
-              <FileType size={32} />
-            </div>
-            <div className="space-y-1">
-              <p className="text-lg font-semibold text-primary">Choose CSV File</p>
-              <p className="text-sm text-tertiary">Drag and drop your attendance sheet here</p>
-            </div>
-            <div className="px-6 py-2 rounded-full bg-surface-raised border border-subtle text-xs font-bold text-secondary uppercase tracking-widest group-hover:bg-accent-glow group-hover:text-white transition-all">
-              Browse Files
-            </div>
+        <label className="card border-2 border-dashed border-subtle hover:border-accent-glow transition-all p-16 flex flex-col items-center gap-4 cursor-pointer">
+          <div className="w-20 h-20 rounded-3xl bg-accent-glow/10 flex items-center justify-center text-accent-glow">
+            <Upload size={40} />
           </div>
+          <div className="text-center">
+            <p className="text-xl font-bold text-primary">Drop your Excel / CSV file here</p>
+            <p className="text-secondary text-sm mt-1">or click to browse</p>
+          </div>
+          <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileUpload} />
+        </label>
+      )}
+
+      {/* ── Step 1.5: Select Sheet ── */}
+      {step === 1.5 && workbook && (
+        <div className="card border-subtle p-8 space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-primary">Select Sheet</h2>
+            <p className="text-secondary text-sm mt-1">This file has multiple sheets. Which one contains the attendance data?</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {workbook.SheetNames.map(sheetName => (
+              <button
+                key={sheetName}
+                onClick={() => loadSheet(workbook, sheetName)}
+                className="p-4 border border-subtle rounded-xl text-left hover:border-accent-glow hover:bg-surface-raised transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <Table className="text-accent-glow" size={20} />
+                  <span className="font-bold text-primary">{sheetName}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+          <button onClick={reset} className="btn-secondary">← Back</button>
         </div>
       )}
 
-      {/* Step 2: Map Columns */}
+      {/* ── Step 2: Pick Header Row ── */}
       {step === 2 && (
-        <div className="card border-subtle p-8 space-y-8 animate-in fade-in slide-in-from-bottom-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-4">
-              <h3 className="text-sm font-bold text-tertiary uppercase tracking-widest flex items-center gap-2">
-                <Table size={16} /> Column Mapping
-              </h3>
-              <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-secondary">Student USN Column</label>
-                  <select 
-                    className="input"
-                    value={mapping.usn}
-                    onChange={(e) => setMapping({ ...mapping, usn: e.target.value })}
-                  >
-                    <option value="">Select column...</option>
-                    {headers.map(h => <option key={h} value={h}>{h}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-secondary">Student Name Column</label>
-                  <select 
-                    className="input"
-                    value={mapping.name}
-                    onChange={(e) => setMapping({ ...mapping, name: e.target.value })}
-                  >
-                    <option value="">Select column...</option>
-                    {headers.map(h => <option key={h} value={h}>{h}</option>)}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <h3 className="text-sm font-bold text-tertiary uppercase tracking-widest flex items-center gap-2">
-                <Calendar size={16} /> Date Columns
-              </h3>
-              <div className="p-4 bg-surface-inset rounded-xl border border-subtle min-h-[120px] max-h-[200px] overflow-y-auto">
-                <div className="flex flex-wrap gap-2">
-                  {headers.map(h => (
-                    <button 
-                      key={h}
-                      onClick={() => setDateColumns(prev => prev.includes(h) ? prev.filter(x => x !== h) : [...prev, h])}
-                      className={`px-3 py-1 rounded-md text-xs font-medium border transition-all ${
-                        dateColumns.includes(h) ? 'bg-accent-glow border-accent-glow text-white' : 'bg-surface border-subtle text-tertiary hover:text-secondary'
-                      }`}
-                    >
-                      {h}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <p className="text-[10px] text-tertiary italic">Selected columns will be treated as session dates.</p>
-            </div>
+        <div className="card border-subtle p-8 space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-primary">Which row are the column headers?</h2>
+            <p className="text-secondary text-sm mt-1">
+              Click the row that contains titles like <span className="text-accent-glow font-mono">USN, Name, Branch</span>. 
+              {headerRowIdx !== null && (
+                <span className="ml-2 text-emerald-400 font-semibold">✓ Row {headerRowIdx + 1} auto-detected.</span>
+              )}
+            </p>
+            <p className="text-[10px] text-tertiary mt-2">
+              Note: Students without a USN will be imported with a temporary ID if they have attendance marked in the sheet.
+            </p>
           </div>
 
-          <div className="pt-6 border-t border-subtle flex justify-between items-center">
-            <button onClick={() => setStep(1)} className="btn-secondary">Back</button>
-            <button 
-              onClick={startImport} 
-              disabled={loading || !mapping.usn || dateColumns.length === 0}
+          <div className="overflow-x-auto rounded-xl border border-subtle max-h-[420px] overflow-y-auto">
+            <table className="w-full text-xs">
+              <tbody>
+                {rawRows.slice(0, 15).map((row, idx) => {
+                  const isSelected = headerRowIdx === idx;
+                  const nonEmpty = row.filter(c => c !== '' && c !== null).length;
+                  if (nonEmpty === 0) return null; // skip completely empty rows
+                  return (
+                    <tr
+                      key={idx}
+                      onClick={() => setHeaderRowIdx(idx)}
+                      className={`cursor-pointer transition-all border-b border-subtle group ${
+                        isSelected ? 'bg-accent-glow/15 ring-1 ring-inset ring-accent-glow' : 'hover:bg-surface-raised'
+                      }`}
+                    >
+                      <td className={`px-4 py-3 font-mono font-bold w-12 shrink-0 ${isSelected ? 'text-accent-glow' : 'text-tertiary'}`}>
+                        {idx + 1}
+                        {isSelected && <span className="ml-1 text-[8px] text-accent-glow">✓</span>}
+                      </td>
+                      {row.slice(0, 10).map((cell, ci) => (
+                        <td key={ci} className={`px-3 py-3 border-l border-subtle/30 truncate max-w-[130px] ${
+                          isSelected ? 'text-primary font-medium' : 'text-secondary'
+                        }`}>
+                          {cell?.toString() || <span className="text-tertiary italic text-[10px]">—</span>}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-between items-center">
+            <button onClick={reset} className="btn-secondary">← Back</button>
+            <button
+              onClick={() => headerRowIdx !== null && confirmHeaderRow(headerRowIdx)}
+              disabled={headerRowIdx === null}
               className="btn-primary"
             >
-              {loading ? <Loader2 className="animate-spin mr-2" size={18} /> : <ArrowRight className="mr-2" size={18} />}
-              Start Import ({fileData.length} rows)
+              Confirm Header Row {headerRowIdx !== null ? `(Row ${headerRowIdx + 1})` : ''} →
             </button>
           </div>
         </div>
       )}
 
-      {/* Step 3: Result */}
+      {/* ── Step 3: Map columns & sync ── */}
       {step === 3 && (
-        <div className="card border-subtle p-12 text-center space-y-8 animate-in zoom-in-95">
-          <div className="w-20 h-20 rounded-3xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 mx-auto">
-            <CheckCircle size={48} />
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-2xl font-bold text-primary">Import Complete!</h3>
-            <p className="text-secondary">We successfully processed your attendance sheet.</p>
-          </div>
-          
-          <div className="grid grid-cols-3 gap-4 max-w-md mx-auto">
-            <div className="p-4 rounded-2xl bg-surface-inset border border-subtle">
-              <p className="text-2xl font-bold text-primary">{stats.total}</p>
-              <p className="text-[10px] font-bold text-tertiary uppercase">Rows</p>
+        <div className="space-y-8">
+          {/* Loading overlay */}
+          {loading && (
+            <div className="card border-subtle p-8 flex items-center gap-4">
+              <Loader2 size={24} className="text-accent-glow animate-spin" />
+              <p className="text-secondary">{statusMsg}</p>
             </div>
-            <div className="p-4 rounded-2xl bg-surface-inset border border-subtle">
-              <p className="text-2xl font-bold text-emerald-400">{stats.imported}</p>
-              <p className="text-[10px] font-bold text-tertiary uppercase">Success</p>
+          )}
+
+          {!loading && (
+            <>
+              {/* Column Mapping */}
+              <div className="card border-subtle p-6 space-y-6">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={18} className="text-accent-glow" />
+                  <h3 className="font-bold text-primary">Map Your Columns</h3>
+                  <span className="ml-auto text-[10px] text-secondary">
+                    {dataRows.length} student rows detected
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {[
+                    { key: 'usn', label: 'USN / Student ID', hint: 'e.g. 4SF24CI005' },
+                    { key: 'name', label: 'Student Name', hint: 'Full name column' },
+                    { key: 'branch', label: 'Branch Code', hint: 'e.g. CI, EC, ME' },
+                    { key: 'email', label: 'Email Column', hint: 'Optional but recommended' },
+                  ].map(({ key, label, hint }) => (
+                    <div key={key} className="space-y-2">
+                      <label className="text-xs font-bold text-secondary uppercase tracking-widest">{label}</label>
+                      <select
+                        className="input"
+                        value={mapping[key]}
+                        onChange={e => setMapping(m => ({ ...m, [key]: e.target.value }))}
+                      >
+                        <option value="">— Select header —</option>
+                        {headers.filter(h => {
+                          const lower = h.toLowerCase();
+                          return !parseHeaderDate(h) && 
+                                 !lower.includes('attendance') && 
+                                 !lower.startsWith('col_');
+                        }).map((h, i) => {
+                          const colIdx = headers.indexOf(h);
+                          const sample = dataRows[0]?.[colIdx]?.toString() || '';
+                          return (
+                            <option key={i} value={h}>
+                              {h}{sample ? ` (${sample.substring(0, 20)})` : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <p className="text-[10px] text-tertiary">{hint}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Session / Attendance Columns */}
+              <div className="card border-subtle p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Calendar size={18} className="text-accent-glow" />
+                    <h3 className="font-bold text-primary">Attendance Session Columns</h3>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {attendanceCols.length > 0 && sessionCols.length === 0 && (
+                      <button
+                        onClick={() => setSessionCols(attendanceCols.map(col => ({ col, date: '' })))}
+                        className="text-xs font-bold text-emerald-400 hover:underline"
+                      >
+                        ✓ Auto-Add All ({attendanceCols.length} attendance columns)
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setSessionCols(c => [...c, { col: '', date: '' }])}
+                      className="text-xs font-bold text-accent-glow hover:underline"
+                    >
+                      + Add Session
+                    </button>
+                  </div>
+                </div>
+
+                {sessionCols.length === 0 && (
+                  <div className="py-8 text-center border border-dashed border-subtle rounded-xl space-y-3">
+                    <p className="text-tertiary text-sm">
+                      {attendanceCols.length > 0
+                        ? `${attendanceCols.length} attendance columns detected.`
+                        : 'No attendance columns detected.'}
+                    </p>
+                    {attendanceCols.length > 0 && (
+                      <button
+                        onClick={() => setSessionCols(attendanceCols.map(col => ({ col, date: '' })))}
+                        className="btn-primary text-sm mx-auto"
+                      >
+                        ✓ Auto-Add {attendanceCols.length} Attendance Columns
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-80 overflow-y-auto">
+                  {sessionCols.map((sc, idx) => (
+                    <div key={idx} className="p-4 rounded-xl bg-surface-raised border border-subtle space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-tertiary uppercase">Column</span>
+                        <button
+                          onClick={() => setSessionCols(c => c.filter((_, i) => i !== idx))}
+                          className="text-rose-400 hover:text-rose-300"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                      <select
+                        className="input text-xs py-1"
+                        value={sc.col}
+                        onChange={e => setSessionCols(c => c.map((s, i) => i === idx ? { ...s, col: e.target.value } : s))}
+                      >
+                        <option value="">— Pick attendance column —</option>
+                        {attendanceCols.map((h, i) => {
+                          const colIdx = headers.indexOf(h);
+                          const sample = dataRows[0]?.[colIdx];
+                          const sampleStr = sample === true ? 'Present' : sample === false ? 'Absent' : sample?.toString() || '';
+                          return (
+                            <option key={i} value={h}>
+                              {h}{sampleStr ? ` (${sampleStr})` : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <input
+                        type="date"
+                        className="input text-xs py-1"
+                        value={sc.date}
+                        onChange={e => setSessionCols(c => c.map((s, i) => i === idx ? { ...s, date: e.target.value } : s))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Data Preview */}
+              {dataRows.length > 0 && mapping.usn && (
+                <div className="card border-subtle p-6 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Table size={18} className="text-accent-glow" />
+                    <h3 className="font-bold text-primary">Data Preview ({dataRows.length} rows)</h3>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-subtle">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="bg-surface-inset border-b border-subtle">
+                          <th className="px-4 py-2 font-bold text-secondary">#</th>
+                          {mapping.usn && <th className="px-4 py-2 font-bold text-secondary">USN</th>}
+                          {mapping.name && <th className="px-4 py-2 font-bold text-secondary">Name</th>}
+                          {mapping.branch && <th className="px-4 py-2 font-bold text-secondary">Branch</th>}
+                          {sessionCols.slice(0, 5).map((sc, i) => (
+                            <th key={i} className="px-4 py-2 font-bold text-secondary">{sc.date || sc.col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-subtle">
+                        {dataRows.slice(0, 20).map((row, ri) => {
+                          const usnIdx = headers.indexOf(mapping.usn);
+                          const nameIdx = headers.indexOf(mapping.name);
+                          const branchIdx = headers.indexOf(mapping.branch);
+                          const emailIdx = headers.indexOf('email');
+                          
+                          let displayUsn = row[usnIdx]?.toString().trim();
+                          if (!displayUsn) {
+                             const name = row[nameIdx]?.toString().trim() || 'UNKNOWN';
+                             const email = emailIdx !== -1 ? row[emailIdx]?.toString().trim() : '';
+                             const emailPrefix = email ? email.split('@')[0] : `R${ri}`;
+                             displayUsn = `TBD_${name.replace(/\s+/g, '_')}_${emailPrefix}`.toUpperCase();
+                          }
+                          
+                          return (
+                            <tr key={ri} className="hover:bg-surface-raised transition-colors">
+                              <td className="px-4 py-3 text-tertiary">{ri + 1}</td>
+                              <td className="px-4 py-3 font-mono text-primary">
+                                {displayUsn}
+                                {!row[usnIdx] && <span className="ml-2 text-[8px] text-amber-400 font-bold uppercase">(No USN)</span>}
+                              </td>
+                              {mapping.name && <td className="px-4 py-3 text-primary">{row[nameIdx]}</td>}
+                              {mapping.branch && <td className="px-4 py-3 text-secondary">{row[branchIdx]}</td>}
+                              {sessionCols.slice(0, 5).map((sc, i) => {
+                                const colIdx = headers.indexOf(sc.col);
+                                const val = row[colIdx];
+                                const present = val === true || val === 1 ||
+                                  ['p', '1', 'present', 'true', 'yes'].includes(val?.toString().toLowerCase().trim());
+                                return (
+                                  <td key={i} className="px-4 py-3 text-center">
+                                    {sc.col ? (
+                                      <span className={`font-bold ${present ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {present ? 'P' : 'A'}
+                                      </span>
+                                    ) : '—'}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {dataRows.length > 20 && (
+                    <p className="text-[10px] text-tertiary text-center">+ {dataRows.length - 20} more rows will be imported</p>
+                  )}
+                </div>
+              )}
+
+              {/* Action bar */}
+              <div className="flex justify-between items-center p-6 bg-surface-raised rounded-2xl border border-subtle">
+                <button onClick={() => setStep(2)} className="btn-secondary">← Back</button>
+                <div className="flex flex-col items-end gap-2">
+                  {sessionCols.length > 0 && sessionCols.filter(s => s.col && s.date).length === 0 && (
+                    <p className="text-xs text-amber-400 font-medium">
+                      ⚠ Please set a date for at least one session column above
+                    </p>
+                  )}
+                  {!mapping.usn && (
+                    <p className="text-xs text-amber-400 font-medium">
+                      ⚠ Please select the USN column above
+                    </p>
+                  )}
+                  <button
+                    onClick={startImport}
+                    disabled={!mapping.usn || sessionCols.filter(s => s.col && s.date).length === 0}
+                    className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Sync Attendance <ArrowRight size={18} className="ml-2" />
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Step 4: Result ── */}
+      {step === 4 && (
+        <div className="card border-subtle p-12 text-center space-y-8">
+          <div className="w-24 h-24 rounded-3xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 mx-auto">
+            <CheckCircle size={56} />
+          </div>
+          <div>
+            <h2 className="text-3xl font-bold text-primary">Bulk Sync Complete!</h2>
+            <p className="text-secondary mt-2">Attendance data processed successfully.</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-6 max-w-sm mx-auto">
+            <div className="p-6 rounded-2xl bg-surface-inset border border-subtle">
+              <p className="text-4xl font-bold text-emerald-400">{stats.imported}</p>
+              <p className="text-xs font-bold text-tertiary uppercase mt-1">Imported</p>
             </div>
-            <div className="p-4 rounded-2xl bg-surface-inset border border-subtle">
-              <p className="text-2xl font-bold text-rose-400">{stats.failed}</p>
-              <p className="text-[10px] font-bold text-tertiary uppercase">Skipped</p>
+            <div className="p-6 rounded-2xl bg-surface-inset border border-subtle">
+              <p className="text-4xl font-bold text-rose-400">{stats.failed}</p>
+              <p className="text-xs font-bold text-tertiary uppercase mt-1">Skipped</p>
             </div>
           </div>
 
-          <button onClick={() => setStep(1)} className="btn-primary">Import Another File</button>
+          {stats.warnings?.length > 0 && (
+            <div className="max-w-2xl mx-auto p-4 rounded-xl bg-amber-500/5 border border-amber-500/20 text-left max-h-48 overflow-y-auto">
+              <p className="text-xs font-bold text-amber-400 mb-2 flex items-center gap-1">
+                <AlertTriangle size={12} /> {stats.warnings.length} Warning(s)
+              </p>
+              {stats.warnings.map((w, i) => <p key={i} className="text-[10px] text-secondary">• {w}</p>)}
+            </div>
+          )}
+
+          <button onClick={reset} className="btn-primary mx-auto">
+            Start New Upload
+          </button>
         </div>
       )}
     </div>
