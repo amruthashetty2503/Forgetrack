@@ -11,6 +11,7 @@ import StudentHistory from './pages/mentor/StudentHistory';
 import Materials from './pages/mentor/Materials';
 import UploadCSV from './pages/mentor/UploadCSV';
 import SessionManager from './pages/mentor/SessionManager';
+import Assignments from './pages/mentor/Assignments';
 import MyAttendance from './pages/student/MyAttendance';
 import StudentMaterials from './pages/student/StudentMaterials';
 import UpcomingSessions from './pages/student/UpcomingSessions';
@@ -42,6 +43,7 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/attendance" element={<MarkAttendance />} />
           <Route path="/history" element={<StudentHistory />} />
+          <Route path="/assignments" element={<Assignments />} />
           <Route path="/materials" element={<Materials />} />
           <Route path="/upload" element={<UploadCSV />} />
         </Route>

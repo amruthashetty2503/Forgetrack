@@ -44,14 +44,29 @@ export default function MarkAttendance() {
         .order('date', { ascending: false });
 
       if (sessionError) throw sessionError;
-      setSessions(sessionData);
       
-      // Auto-select today's session or the most recent one
+      // Explicitly sort: Year DESC, Month DESC, Day DESC
+      const sortedSessions = (sessionData || []).sort((a, b) => {
+        const dateA = new Date(a.date);
+        const dateB = new Date(b.date);
+        return dateB - dateA;
+      });
+      
+      setSessions(sortedSessions);
+      
+      // Auto-select today's session or the most recent past one
       const todaySession = sessionData.find(s => s.date === today);
       if (todaySession) {
         setSelectedSession(todaySession);
       } else if (sessionData.length > 0) {
-        setSelectedSession(sessionData[0]);
+        // Since sessions are ordered DESC, the first one <= today is the most recent
+        const recentPast = sessionData.find(s => s.date <= today);
+        if (recentPast) {
+          setSelectedSession(recentPast);
+        } else {
+          // If all sessions are in the future, pick the one closest to today (the last one in DESC order)
+          setSelectedSession(sessionData[sessionData.length - 1]);
+        }
       }
 
       // Fetch students
@@ -77,7 +92,7 @@ export default function MarkAttendance() {
       const sessionDate = new Date(formData.date);
       const year = sessionDate.getFullYear();
       const month = sessionDate.getMonth() + 1;
-      const monthNumber = ((year - 2025) * 12 + month - 8) + 1;
+      const monthNumber = Math.max(1, ((year - 2025) * 12 + month - 8) + 1);
 
       const sessionData = {
         ...formData,
@@ -393,11 +408,12 @@ export default function MarkAttendance() {
                   }`}
                 >
                   <div className="flex justify-between items-start mb-3">
-                    <div className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center border transition-all ${
-                      isSelected ? 'bg-accent-glow border-accent-glow text-white' : 'bg-surface-inset border-subtle text-tertiary group-hover:border-secondary group-hover:text-secondary'
+                    <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center border transition-all ${
+                      isSelected ? 'bg-accent-glow border-accent-glow text-white shadow-lg' : 'bg-surface-inset border-subtle text-tertiary group-hover:border-secondary group-hover:text-secondary'
                     }`}>
-                      <span className="text-[8px] font-bold uppercase">{sessionDate.toLocaleString('default', { month: 'short' })}</span>
-                      <span className="text-sm font-bold">{sessionDate.getDate()}</span>
+                      <span className="text-[7px] font-bold uppercase tracking-tighter">{sessionDate.toLocaleString('default', { month: 'short' })}</span>
+                      <span className="text-sm font-black leading-none">{sessionDate.getDate()}</span>
+                      <span className="text-[7px] font-bold opacity-60 mt-0.5">{sessionDate.getFullYear()}</span>
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
                       <button onClick={(e) => { e.stopPropagation(); startEdit(session); }} className="p-1.5 rounded-md hover:bg-accent-glow/10 hover:text-accent-glow"><Edit2 size={14} /></button>
@@ -441,7 +457,7 @@ export default function MarkAttendance() {
                 <option value="" disabled>-- Select Session to Mark Attendance --</option>
                 {sessions.map(s => (
                   <option key={s.id} value={s.id}>
-                    {s.date}: {s.topic}
+                    {new Date(s.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}: {s.topic}
                   </option>
                 ))}
               </select>

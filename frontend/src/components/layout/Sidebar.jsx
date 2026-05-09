@@ -16,6 +16,7 @@ export default function Sidebar() {
     { section: 'ACTIVITY', items: [
       { name: 'Mark Attendance', path: '/attendance', icon: <CheckSquare size={18} /> },
       { name: 'Student History', path: '/history', icon: <Clock size={18} /> },
+      { name: 'Assignments', path: '/assignments', icon: <Calendar size={18} /> },
       { name: 'Materials', path: '/materials', icon: <FileText size={18} /> }
     ]},
     { section: 'DATA', items: [

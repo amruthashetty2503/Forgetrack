@@ -44,12 +44,17 @@ export default function Login() {
     e.preventDefault();
     console.log('Login Button Clicked!', { tab, identifier, password });
     
-    // 1. DEMO BYPASS: Mentor
+    // 1. DEMO BYPASS: Mentor (Require specific password)
     if (tab === 'mentor' && identifier.toLowerCase().includes('nischay')) {
-      console.log('Mentor Bypass Triggered');
-      await loginAsDemo('mentor', identifier);
-      navigate('/dashboard');
-      return;
+      if (password === 'password123') {
+        console.log('Mentor Bypass Triggered');
+        await loginAsDemo('mentor', identifier);
+        navigate('/dashboard');
+        return;
+      } else {
+        setError('Invalid password for mentor account');
+        return;
+      }
     }
 
     // 2. DEMO BYPASS: Any Student USN starting with 4SH (Password must match USN)

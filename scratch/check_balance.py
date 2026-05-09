@@ -1,0 +1,11 @@
+content = open('frontend/src/pages/mentor/StudentHistory.jsx', 'r', encoding='utf-8').read()
+div_open = content.count('<div')
+div_close = content.count('</div')
+brace_open = content.count('{')
+brace_close = content.count('}')
+paren_open = content.count('(')
+paren_close = content.count(')')
+
+print(f"DIV: {div_open} open, {div_close} close (Diff: {div_open - div_close})")
+print(f"BRACE: {brace_open} open, {brace_close} close (Diff: {brace_open - brace_close})")
+print(f"PAREN: {paren_open} open, {paren_close} close (Diff: {paren_open - paren_close})")

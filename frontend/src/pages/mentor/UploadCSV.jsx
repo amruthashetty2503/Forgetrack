@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { genAI } from '../../lib/gemini';
 
-const MODEL_NAME = "gemini-2.5-flash-lite";
+const MODEL_NAME = "gemini-1.5-flash";
 
 export default function UploadCSV() {
   // ── Wizard state ──────────────────────────────────────────────────────────────
@@ -27,7 +27,7 @@ export default function UploadCSV() {
   // ── Mapping state ─────────────────────────────────────────────────────────────
   const [mapping, setMapping] = useState({ usn: '', name: '', branch: '', email: '' });
   const [sessionCols, setSessionCols] = useState([]); // [{col, date}]
-  const [programStart, setProgramStart] = useState('2025-08-04');
+  const [programStart, setProgramStart] = useState('2025-01-01');
   const [typicalDays, setTypicalDays] = useState(['Monday', 'Wednesday', 'Friday']);
 
   // ── Step 1: File Upload ────────────────────────────────────────────────────────
@@ -35,26 +35,65 @@ export default function UploadCSV() {
   const parseHeaderDate = (val) => {
     if (!val) return null;
     let d = null;
-    if (val instanceof Date || (typeof val === 'object' && val.getFullYear)) {
+    
+    if (typeof val === 'number' && val > 40000 && val < 60000) {
+      // Handle Excel numeric date serials
+      d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    } else if (val instanceof Date || (typeof val === 'object' && val.getFullYear)) {
       d = new Date(val);
     } else {
       const str = val.toString().trim();
+      // Match DD/MM/YY, DD/MM/YYYY, DD-MM-YY, DD-MM-YYYY
       const m1 = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
       if (m1) {
-        let [, day, month, year] = m1;
+        let [, p1, p2, year] = m1;
         if (year.length === 2) year = '20' + year;
-        d = new Date(`${year}-${month.padStart(2,'0')}-${day.padStart(2,'0')}`);
+        
+        const v1 = parseInt(p1);
+        const v2 = parseInt(p2);
+        
+        // Strategy: In India, DD/MM/YYYY is standard.
+        // If v2 > 12, it MUST be MM/DD/YYYY (US)
+        // If v1 > 12, it MUST be DD/MM/YYYY (UK/IN)
+        // If both <= 12, assume DD/MM/YYYY as per cohort standard
+        let day, month;
+        if (v2 > 12) {
+          month = v1; day = v2;
+        } else {
+          day = v1; month = v2;
+        }
+        
+        d = new Date(parseInt(year), month - 1, day);
+      } else {
+        const d2 = new Date(str);
+        if (!isNaN(d2.getTime())) d = d2;
       }
     }
 
     if (d && !isNaN(d.getTime())) {
-      return d.toISOString().slice(0, 10);
+      let y = d.getFullYear();
+      let m = d.getMonth() + 1;
+      let day = d.getDate();
+
+      // AUTO-CORRECT: If the date is after April 30, 2026, it's likely a Day/Month swap
+      // e.g. 12 Feb (02/12) becoming 2 Dec (12/02)
+      if (y === 2026 && m > 4) {
+        // Try swapping
+        const swappedDate = new Date(y, day - 1, m);
+        if (swappedDate.getMonth() + 1 <= 4) {
+          m = swappedDate.getMonth() + 1;
+          day = swappedDate.getDate();
+        }
+      }
+
+      return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
     return null;
   };
 
   const isDateInRange = (iso) => {
-    return iso >= '2025-08-04' && iso <= '2025-12-31';
+    // Program is from June 2025 to April 30, 2026
+    return iso >= '2025-06-01' && iso <= '2026-04-30';
   };
 
   const handleFileUpload = useCallback((e) => {
@@ -140,9 +179,12 @@ export default function UploadCSV() {
   // Only columns whose header contains "attendance" (case-insensitive)
   const attendanceCols = React.useMemo(() => {
     if (!headers.length) return [];
-    return headers.filter(h =>
-      h?.toLowerCase().includes('attendance')
-    );
+    return headers.filter(h => {
+      const lower = h?.toString().toLowerCase();
+      if (lower?.includes('attendance')) return true;
+      const date = parseHeaderDate(h);
+      return date && isDateInRange(date);
+    });
   }, [headers]);
 
   // ── AI Analysis ───────────────────────────────────────────────────────────────
@@ -163,7 +205,7 @@ Tasks:
 2. Find which header contains the student Name.
 3. Find which header contains the Branch/Department code.
 4. Find all headers that represent attendance dates/sessions (columns with P/A/1/0 values).
-   For each, determine the date in YYYY-MM-DD format.
+   The program spans from 2025 to 2026. For each session, determine the date in YYYY-MM-DD format.
 
 Return ONLY valid JSON:
 {
@@ -193,10 +235,17 @@ Return ONLY valid JSON:
         headers.includes(s.col) && isDateInRange(s.date)
       );
       
-      // If AI found sessions, use them. Otherwise, fall back to autoSessions from date parsing
-      if (validAiSessions.length > 0) {
-        setSessionCols(validAiSessions);
-      }
+      // If AI found sessions, merge them with auto-detected ones, preferring auto-detected
+      setSessionCols(prev => {
+        const existingCols = new Set(prev.map(s => s.col));
+        const newSessions = [...prev];
+        validAiSessions.forEach(s => {
+          if (!existingCols.has(s.col)) {
+            newSessions.push(s);
+          }
+        });
+        return newSessions.sort((a, b) => a.date.localeCompare(b.date));
+      });
     } catch (err) {
       console.warn('AI mapping failed:', err);
       setMapping({ usn: '', name: '', branch: '' });
@@ -231,8 +280,9 @@ Return ONLY valid JSON:
         const hasAttendance = sessionCols.some(({ col }) => {
           const colIdx = headers.indexOf(col);
           const val = row[colIdx];
-          return val === true || val === 1 || 
-            ['p', '1', 'present', 'true', 'yes'].includes(val?.toString().toLowerCase().trim());
+          if (val === true || val === 1 || val === '1' || val === 1.0) return true;
+          const sVal = val?.toString().toLowerCase().trim();
+          return ['p', '1', 'present', 'true', 'yes'].includes(sVal);
         });
         
         return hasAttendance;
@@ -330,7 +380,7 @@ Return ONLY valid JSON:
         const newSessions = missingDates.map(d => {
           const year = new Date(d).getFullYear();
           const month = new Date(d).getMonth() + 1;
-          const monthNumber = ((year - 2025) * 12 + month - 8) + 1;
+          const monthNumber = Math.max(1, ((year - 2025) * 12 + month - 8) + 1);
           return {
             date: d,
             topic: `Imported: ${d}`,
@@ -360,7 +410,7 @@ Return ONLY valid JSON:
           const colIdx = headers.indexOf(col);
           const val = row[colIdx];
           // Handle boolean TRUE/FALSE from Excel, numbers (1/0), and text (P/A)
-          const isPresent = val === true || val === 1 ||
+          const isPresent = val === true || val === 1 || val === '1' || val === 1.0 ||
             ['p', '1', 'present', 'true', 'yes'].includes(val?.toString().toLowerCase().trim());
 
           attendanceRecords.push({

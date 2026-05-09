@@ -45,7 +45,7 @@ export default function SessionManager() {
       const sessionDate = new Date(formData.date);
       const year = sessionDate.getFullYear();
       const month = sessionDate.getMonth() + 1; // 1-12
-      const monthNumber = ((year - 2025) * 12 + month - 8) + 1;
+      const monthNumber = Math.max(1, ((year - 2025) * 12 + month - 8) + 1);
 
       const sessionData = {
         ...formData,

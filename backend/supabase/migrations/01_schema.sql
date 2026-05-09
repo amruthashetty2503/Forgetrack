@@ -57,13 +57,14 @@ DECLARE
 BEGIN
   SELECT date INTO session_date FROM public.sessions WHERE id = NEW.session_id;
   
-  IF session_date > CURRENT_DATE THEN
-    RAISE EXCEPTION 'Cannot mark attendance for future dates.';
-  END IF;
+  -- Relaxing these for bulk import flexibility
+  -- IF session_date > CURRENT_DATE THEN
+  --   RAISE EXCEPTION 'Cannot mark attendance for future dates.';
+  -- END IF;
 
-  IF session_date < '2025-08-04' THEN
-    RAISE EXCEPTION 'Cannot mark attendance for dates before the program start (2025-08-04).';
-  END IF;
+  -- IF session_date < '2025-08-04' THEN
+  --   RAISE EXCEPTION 'Cannot mark attendance for dates before the program start (2025-08-04).';
+  -- END IF;
 
   RETURN NEW;
 END;

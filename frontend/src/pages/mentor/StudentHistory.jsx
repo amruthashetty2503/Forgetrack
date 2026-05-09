@@ -8,6 +8,7 @@ export default function StudentHistory() {
   const [sessionCount, setSessionCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeFilter, setActiveFilter] = useState('all'); // all, above85, 75to85, below75
 
   useEffect(() => {
     fetchData();
@@ -32,12 +33,28 @@ export default function StudentHistory() {
       if (sessionError) throw sessionError;
       setSessionCount(count || 0);
 
-      // 3. Fetch all attendance records
-      const { data: attendanceData, error: attendanceError } = await supabase
-        .from('attendance')
-        .select('student_id, present');
+      // 3. Fetch all attendance records (with pagination to bypass 1000 row limit)
+      let allAttendance = [];
+      let lastId = 0;
+      let hasMore = true;
       
-      if (attendanceError) throw attendanceError;
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('attendance')
+          .select('id, student_id, present')
+          .gt('id', lastId)
+          .order('id')
+          .limit(1000);
+          
+        if (error) throw error;
+        if (data.length === 0) {
+          hasMore = false;
+        } else {
+          allAttendance = [...allAttendance, ...data];
+          lastId = data[data.length - 1].id;
+          if (data.length < 1000) hasMore = false;
+        }
+      }
 
       // 4. Calculate stats
       const statsMap = {};
@@ -45,7 +62,7 @@ export default function StudentHistory() {
         statsMap[s.id] = { total: count || 0, attended: 0 };
       });
 
-      attendanceData.forEach(record => {
+      allAttendance.forEach(record => {
         if (statsMap[record.student_id] && record.present) {
           statsMap[record.student_id].attended += 1;
         }
@@ -72,10 +89,21 @@ export default function StudentHistory() {
     return 'text-rose-400 bg-rose-500/10 border-rose-500/20';
   };
 
-  const filteredStudents = students.filter(s => 
-    s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    s.usn.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredStudents = students.filter(s => {
+    const matchesSearch = s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          s.usn.toLowerCase().includes(searchTerm.toLowerCase());
+    if (!matchesSearch) return false;
+    
+    const percentage = getPercentage(s.id);
+    if (activeFilter === 'above85') return percentage >= 85;
+    if (activeFilter === '75to85') return percentage >= 75 && percentage < 85;
+    if (activeFilter === 'below75') return percentage < 75;
+    return true;
+  });
+
+  const avgAttendance = students.length > 0 
+    ? Math.round(students.reduce((acc, s) => acc + getPercentage(s.id), 0) / students.length) 
+    : 0;
 
   if (loading) {
     return (
@@ -97,7 +125,8 @@ export default function StudentHistory() {
           <p className="text-body text-secondary">Track long-term attendance and engagement across all sessions.</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+          <div className="flex items-center gap-3">
           <div className="relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-tertiary" />
             <input 
@@ -114,8 +143,9 @@ export default function StudentHistory() {
           </button>
         </div>
       </div>
+    </div>
 
-      {/* Summary Cards */}
+    {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="card bg-surface-raised border-subtle p-6 flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-accent-glow/10 flex items-center justify-center text-accent-glow">
@@ -132,9 +162,7 @@ export default function StudentHistory() {
           </div>
           <div>
             <p className="text-xs font-bold text-tertiary uppercase tracking-widest">Avg Attendance</p>
-            <p className="text-2xl font-bold text-primary">
-              {students.length > 0 ? Math.round(students.reduce((acc, s) => acc + getPercentage(s.id), 0) / students.length) : 0}%
-            </p>
+            <p className="text-2xl font-bold text-primary">{avgAttendance}%</p>
           </div>
         </div>
         <div className="card bg-surface-raised border-subtle p-6 flex items-center gap-4">
@@ -151,7 +179,34 @@ export default function StudentHistory() {
       </div>
 
       {/* Main Table */}
-      <div className="card border-subtle overflow-hidden">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex bg-surface-inset p-1 rounded-xl border border-subtle">
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'above85', label: '> 85%' },
+              { id: '75to85', label: '75-85%' },
+              { id: 'below75', label: '< 75%' },
+            ].map(f => (
+              <button
+                key={f.id}
+                onClick={() => setActiveFilter(f.id)}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                  activeFilter === f.id 
+                    ? 'bg-accent-glow text-white shadow-lg' 
+                    : 'text-tertiary hover:text-secondary'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <span className="text-micro text-tertiary uppercase tracking-widest">
+            Showing {filteredStudents.length} of {students.length} students
+          </span>
+        </div>
+
+        <div className="card border-subtle overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead>
@@ -218,5 +273,6 @@ export default function StudentHistory() {
         )}
       </div>
     </div>
-  );
+  </div>
+);
 }
