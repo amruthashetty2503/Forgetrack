@@ -91,15 +91,9 @@ export function AuthProvider({ children }) {
           console.warn('Could not find name for USN via RPC:', nameError);
         }
       } else if (!forcedName && demoRole === 'mentor') {
-        const { data, error } = await supabase
-          .from('users')
-          .select('display_name')
-          .eq('email', demoEmail)
-          .single();
-        
-        if (!error && data) {
-          displayName = data.display_name;
-        }
+        // Use email prefix as name (e.g. nischay@theboringpeople.in -> Nischay)
+        const emailPrefix = demoEmail.split('@')[0];
+        displayName = emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1).toLowerCase();
       }
     } catch (err) {
       console.error('Error fetching demo profile:', err);

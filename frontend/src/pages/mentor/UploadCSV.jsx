@@ -753,7 +753,8 @@ Return ONLY valid JSON:
                           const emailIdx = headers.indexOf('email');
                           
                           let displayUsn = row[usnIdx]?.toString().trim();
-                          if (!displayUsn) {
+                          const isGenerated = !displayUsn;
+                          if (isGenerated) {
                              const name = row[nameIdx]?.toString().trim() || 'UNKNOWN';
                              const email = emailIdx !== -1 ? row[emailIdx]?.toString().trim() : '';
                              const emailPrefix = email ? email.split('@')[0] : `R${ri}`;
@@ -764,8 +765,12 @@ Return ONLY valid JSON:
                             <tr key={ri} className="hover:bg-surface-raised transition-colors">
                               <td className="px-4 py-3 text-tertiary">{ri + 1}</td>
                               <td className="px-4 py-3 font-mono text-primary">
-                                {displayUsn}
-                                {!row[usnIdx] && <span className="ml-2 text-[8px] text-amber-400 font-bold uppercase">(No USN)</span>}
+                                {!isGenerated ? displayUsn : (
+                                   <div className="flex flex-col">
+                                      <span className="text-xs text-secondary italic opacity-60">Generated USN</span>
+                                      {row[emailIdx] && <span className="text-[10px] text-tertiary">{row[emailIdx]}</span>}
+                                   </div>
+                                )}
                               </td>
                               {mapping.name && <td className="px-4 py-3 text-primary">{row[nameIdx]}</td>}
                               {mapping.branch && <td className="px-4 py-3 text-secondary">{row[branchIdx]}</td>}

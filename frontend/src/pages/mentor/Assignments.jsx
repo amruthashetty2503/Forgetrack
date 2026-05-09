@@ -67,6 +67,17 @@ export default function Assignments() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    
+    // Date Validation: Check if due date is in the past
+    const selectedDate = new Date(formData.due_date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset time for comparison
+    
+    if (selectedDate < today) {
+      alert('The due date has already passed. Please select a future date.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const { error } = await supabase
@@ -74,7 +85,7 @@ export default function Assignments() {
         .insert([{
           ...formData,
           session_id: formData.session_id || null,
-          due_date: new Date(formData.due_date).toISOString()
+          due_date: selectedDate.toISOString()
         }]);
 
       if (error) throw error;
@@ -245,27 +256,32 @@ export default function Assignments() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-tertiary uppercase tracking-widest">Due Date</label>
-                  <input 
-                    required
-                    type="date" 
-                    className="input w-full"
-                    value={formData.due_date}
-                    onChange={(e) => setFormData({...formData, due_date: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-tertiary uppercase tracking-widest">Max Points</label>
-                  <input 
-                    required
-                    type="number" 
-                    className="input w-full"
-                    value={formData.max_points}
-                    onChange={(e) => setFormData({...formData, max_points: parseInt(e.target.value)})}
-                  />
-                </div>
+              <div>
+                <label className="text-label text-tertiary block mb-2 uppercase">Due Date</label>
+                <input
+                  type="date"
+                  className="input cursor-pointer"
+                  value={formData.due_date}
+                  onClick={(e) => e.target.showPicker?.()}
+                  onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                  required
+                />
               </div>
+              <div>
+                <label className="text-label text-tertiary block mb-2 uppercase">Max Points</label>
+                <input
+                  type="number"
+                  className="input"
+                  placeholder="Points (e.g. 100)"
+                  value={formData.max_points === 0 ? '' : formData.max_points}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFormData({ ...formData, max_points: val === '' ? '' : parseInt(val) });
+                  }}
+                  required
+                />
+              </div>
+            </div>
 
               <div className="space-y-2">
                 <label className="text-xs font-bold text-tertiary uppercase tracking-widest">Linked Session (Optional)</label>

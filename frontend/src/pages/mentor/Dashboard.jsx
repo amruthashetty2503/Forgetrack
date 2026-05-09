@@ -14,6 +14,7 @@ export default function Dashboard() {
     recentSession: null,
     upcomingSessions: []
   });
+  const [upcomingAssignments, setUpcomingAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -57,6 +58,17 @@ export default function Dashboard() {
         recentSession: recent,
         upcomingSessions: upcoming.slice(0, 3) // Show top 3 upcoming
       });
+
+      // 5. Get upcoming assignments
+      const { data: assignmentsData } = await supabase
+        .from('assignments')
+        .select('*')
+        .gte('due_date', today)
+        .order('due_date', { ascending: true })
+        .limit(3);
+      
+      setUpcomingAssignments(assignmentsData || []);
+
     } catch (err) {
       console.error('Dashboard fetch error:', err);
     } finally {
@@ -194,29 +206,47 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Quick Actions */}
+        {/* Upcoming Assignments */}
         <div className="card bg-surface-raised border-subtle p-8 space-y-6">
-          <h3 className="text-lg font-bold text-primary">Priority Tasks</h3>
-          <div className="space-y-3">
-            <div className="flex items-start gap-4 p-4 rounded-xl bg-surface-inset border border-subtle hover:border-accent-glow/30 transition-all cursor-pointer group" onClick={() => navigate('/upload')}>
-              <div className="mt-1">
-                <div className="w-2 h-2 rounded-full bg-accent-glow group-hover:scale-150 transition-all" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-primary">Import Batch Data</p>
-                <p className="text-xs text-tertiary">New CSV records available for Month 6.</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-4 p-4 rounded-xl bg-surface-inset border border-subtle hover:border-amber-500/30 transition-all cursor-pointer group" onClick={() => navigate('/materials')}>
-              <div className="mt-1">
-                <div className="w-2 h-2 rounded-full bg-amber-500" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-primary">Upload Session 12 Slides</p>
-                <p className="text-xs text-tertiary">Students are waiting for resources.</p>
-              </div>
-            </div>
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold text-primary">Upcoming Deadlines</h3>
+            <span className="px-2 py-0.5 rounded bg-accent-glow/10 text-accent-glow text-[10px] font-bold uppercase">Assignments</span>
           </div>
+          <div className="space-y-4">
+            {upcomingAssignments.length > 0 ? upcomingAssignments.map(assignment => {
+              const diffTime = new Date(assignment.due_date) - new Date();
+              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              
+              return (
+                <div 
+                  key={assignment.id} 
+                  className="flex items-start gap-4 p-4 rounded-xl bg-surface-inset border border-subtle hover:border-accent-glow/30 transition-all cursor-pointer group"
+                  onClick={() => navigate('/assignments')}
+                >
+                  <div className="mt-1">
+                    <div className={`w-2 h-2 rounded-full ${diffDays <= 2 ? 'bg-rose-500 animate-pulse' : 'bg-accent-glow'}`} />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-primary truncate">{assignment.title}</p>
+                    <div className="flex items-center justify-between mt-1">
+                      <p className="text-[10px] text-tertiary">Due in {diffDays} days</p>
+                      <p className="text-[10px] font-bold text-secondary">{new Date(assignment.due_date).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div className="text-center py-10 opacity-40">
+                <p className="text-sm italic text-tertiary">No upcoming assignments.</p>
+              </div>
+            )}
+          </div>
+          <button 
+            onClick={() => navigate('/assignments')}
+            className="w-full text-center text-xs font-bold text-accent-glow hover:underline"
+          >
+            Manage All Assignments
+          </button>
         </div>
       </div>
     </div>

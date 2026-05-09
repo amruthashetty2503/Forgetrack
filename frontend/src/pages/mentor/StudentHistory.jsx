@@ -231,7 +231,12 @@ export default function StudentHistory() {
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-primary">{student.name}</p>
-                          <p className="text-xs text-tertiary font-mono">{student.usn}</p>
+                          {student.usn && !student.usn.startsWith('TBD_') && (
+                            <p className="text-xs text-tertiary font-mono uppercase tracking-wider">{student.usn}</p>
+                          )}
+                          {student.email && (
+                            <p className="text-[10px] text-tertiary opacity-60">{student.email}</p>
+                          )}
                         </div>
                       </div>
                     </td>
