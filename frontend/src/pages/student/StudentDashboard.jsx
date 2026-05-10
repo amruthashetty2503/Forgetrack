@@ -21,13 +21,13 @@ export default function StudentDashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const usn = user.email.split('@')[0].toUpperCase();
+      const usnOrEmailPrefix = user.email.split('@')[0].toUpperCase();
       
       // 1. Get Student Info
       const { data: student } = await supabase
         .from('students')
         .select('id')
-        .eq('usn', usn)
+        .or(`email.eq.${user.email},usn.eq.${usnOrEmailPrefix}`)
         .single();
 
       if (!student) throw new Error('Profile not found');
@@ -58,6 +58,13 @@ export default function StudentDashboard() {
         .order('created_at', { ascending: false })
         .limit(3);
 
+      // 5. Get Assignments
+      const { data: assignments } = await supabase
+        .from('assignments')
+        .select('*')
+        .order('due_date', { ascending: true })
+        .limit(3);
+
       setData({
         stats: {
           total: pastSessions.length,
@@ -65,7 +72,8 @@ export default function StudentDashboard() {
           percentage: pastSessions.length > 0 ? Math.round((presentCount / pastSessions.length) * 100) : 0
         },
         nextSession: upcomingSessions[0] || null,
-        recentMaterials: materials || []
+        recentMaterials: materials || [],
+        upcomingAssignments: assignments || []
       });
     } catch (err) {
       console.error('Error loading student dashboard:', err);
@@ -232,6 +240,49 @@ export default function StudentDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Upcoming Assignments Row */}
+      <div className="card bg-surface-raised border-subtle p-8 space-y-6">
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-bold text-primary">Your Assignments</h3>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {data.upcomingAssignments?.map((a) => {
+            const diffTime = new Date(a.due_date) - new Date();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            return (
+              <div 
+                key={a.id} 
+                className="p-4 rounded-xl bg-void border border-subtle hover:border-accent-glow/30 transition-all flex flex-col justify-between h-full"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="px-2 py-0.5 rounded bg-accent-glow/10 text-accent-glow text-[10px] font-bold uppercase">
+                      {a.max_points} Points
+                    </span>
+                    <span className={`text-[10px] font-bold uppercase ${diffDays < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      {diffDays < 0 ? 'Overdue' : `Due in ${diffDays} days`}
+                    </span>
+                  </div>
+                  <h4 className="text-sm font-bold text-primary line-clamp-1">{a.title}</h4>
+                  <p className="text-xs text-secondary mt-2 line-clamp-2">{a.description}</p>
+                </div>
+                <div className="mt-4 pt-3 border-t border-subtle flex justify-between items-center">
+                  <span className="text-[10px] text-tertiary">Due: {new Date(a.due_date).toLocaleDateString()}</span>
+                </div>
+              </div>
+            );
+          })}
+          {(!data.upcomingAssignments || data.upcomingAssignments.length === 0) && (
+            <div className="col-span-3 py-10 text-center border border-dashed border-subtle rounded-xl">
+              <p className="text-tertiary text-sm">No assignments posted yet.</p>
+            </div>
+          )}
+        </div>
+      </div>
+
     </div>
   );
 }

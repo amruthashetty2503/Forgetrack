@@ -17,13 +17,13 @@ export default function UpcomingSessions() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const usn = user.email.split('@')[0].toUpperCase();
+      const usnOrEmailPrefix = user.email.split('@')[0].toUpperCase();
       
       // 1. Find the student record
       const { data: student } = await supabase
         .from('students')
         .select('id')
-        .eq('usn', usn)
+        .or(`email.eq.${user.email},usn.eq.${usnOrEmailPrefix}`)
         .single();
 
       if (!student) throw new Error('Student profile not found');

@@ -16,14 +16,14 @@ export default function MyAttendance() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. Get the student's USN from their email (for demo)
-      const usn = user.email.split('@')[0].toUpperCase();
+      // 1. Get the student's USN or Email prefix
+      const usnOrEmailPrefix = user.email.split('@')[0].toUpperCase();
       
-      // 2. Find the student record
+      // 2. Find the student record by email or USN
       const { data: student } = await supabase
         .from('students')
         .select('id')
-        .eq('usn', usn)
+        .or(`email.eq.${user.email},usn.eq.${usnOrEmailPrefix}`)
         .single();
 
       if (!student) throw new Error('Student profile not found');

@@ -42,43 +42,75 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    console.log('Login Button Clicked!', { tab, identifier, password });
+    setLoginLoading(true);
+    setError('');
     
-    // 1. DEMO BYPASS: Mentor (Require specific password)
+    // 1. MENTOR LOGIN: Check specific email and password
     if (tab === 'mentor' && identifier.toLowerCase().includes('nischay')) {
       if (password === 'password123') {
-        console.log('Mentor Bypass Triggered');
         await loginAsDemo('mentor', identifier);
         navigate('/dashboard');
         return;
       } else {
         setError('Invalid password for mentor account');
+        setLoginLoading(false);
         return;
       }
     }
 
-    // 2. DEMO BYPASS: Any Student USN starting with 4SH (Password must match USN)
-    if (tab === 'student' && identifier.toUpperCase().startsWith('4SH') && password.toUpperCase() === identifier.toUpperCase()) {
-      console.log('Student Bypass Triggered for', identifier);
-      await loginAsDemo('student', `${identifier.toLowerCase()}@forge.local`);
-      navigate('/me/dashboard');
-      return;
-    }
-
-    setLoginLoading(true);
-    setError('');
-
     try {
-      let emailToLogin = identifier;
-
       if (tab === 'student') {
-        const { data: emailData, error: rpcError } = await supabase.rpc('get_email_by_usn', { p_usn: identifier });
-        if (rpcError || !emailData) throw new Error('Invalid USN or password');
-        emailToLogin = emailData;
+        const isEmail = identifier.includes('@');
+        let studentRecord = null;
+
+        if (isEmail) {
+          const queryEmail = identifier.toLowerCase();
+          if (password.toLowerCase() !== queryEmail) {
+            throw new Error('Invalid email or password');
+          }
+
+          // Query by email
+          const { data, error } = await supabase
+            .from('students')
+            .select('*')
+            .eq('email', queryEmail)
+            .limit(1)
+            .maybeSingle();
+
+          if (error || !data) {
+            throw new Error('Email not found. Please ensure the mentor has imported your details.');
+          }
+          studentRecord = data;
+        } else {
+          const usn = identifier.toUpperCase();
+          if (password.toUpperCase() !== usn) {
+            throw new Error('Invalid USN or password');
+          }
+
+          // Query by USN
+          const { data, error } = await supabase
+            .from('students')
+            .select('*')
+            .eq('usn', usn)
+            .limit(1)
+            .maybeSingle();
+
+          if (error || !data) {
+            throw new Error('USN not found. Please ensure the mentor has imported your details.');
+          }
+          studentRecord = data;
+        }
+
+        // Proceed with login using the discovered student record
+        const demoEmail = studentRecord.email || `${studentRecord.usn?.toLowerCase() || 'student'}@forge.local`;
+        await loginAsDemo('student', demoEmail, studentRecord.name);
+        navigate('/me/dashboard');
+        return;
       }
 
+      // Standard Auth (Fallback)
       const { error: authError } = await supabase.auth.signInWithPassword({
-        email: emailToLogin,
+        email: identifier,
         password: password,
       });
 
