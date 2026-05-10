@@ -245,7 +245,7 @@ export default function MarkAttendance() {
 
   const filteredStudents = students.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    s.usn.toLowerCase().includes(searchTerm.toLowerCase())
+    (s.usn && s.usn.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const presentCount = students.filter(s => attendance[s.id]).length;

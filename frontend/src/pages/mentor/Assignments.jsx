@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { ClipboardList, Plus, Search, Filter, X, Calendar, AlertCircle, Loader2 } from 'lucide-react';
+import { ClipboardList, Plus, Search, Filter, X, Calendar, AlertCircle, Loader2, Trash2, Edit2 } from 'lucide-react';
 
 export default function Assignments() {
   const [assignments, setAssignments] = useState([]);
@@ -65,7 +65,36 @@ export default function Assignments() {
     }
   };
 
-  const handleCreate = async (e) => {
+  const openNewModal = () => {
+    setFormData({ title: '', description: '', due_date: '', max_points: 100, session_id: '' });
+    setShowModal(true);
+  };
+
+  const handleEdit = (assignment) => {
+    setFormData({
+      id: assignment.id,
+      title: assignment.title,
+      description: assignment.description || '',
+      due_date: assignment.due_date.split('T')[0],
+      max_points: assignment.max_points,
+      session_id: assignment.session_id || ''
+    });
+    setShowModal(true);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this assignment?')) return;
+    try {
+      const { error } = await supabase.from('assignments').delete().eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (err) {
+      console.error('Error deleting assignment:', err);
+      alert('Failed to delete assignment.');
+    }
+  };
+
+  const handleSave = async (e) => {
     e.preventDefault();
     
     // Date Validation: Check if due date is in the past
@@ -80,13 +109,22 @@ export default function Assignments() {
 
     setSubmitting(true);
     try {
-      const { error } = await supabase
-        .from('assignments')
-        .insert([{
-          ...formData,
-          session_id: formData.session_id || null,
-          due_date: selectedDate.toISOString()
-        }]);
+      const payload = {
+        title: formData.title,
+        description: formData.description,
+        session_id: formData.session_id || null,
+        due_date: selectedDate.toISOString(),
+        max_points: formData.max_points
+      };
+
+      let error;
+      if (formData.id) {
+        const { error: updateError } = await supabase.from('assignments').update(payload).eq('id', formData.id);
+        error = updateError;
+      } else {
+        const { error: insertError } = await supabase.from('assignments').insert([payload]);
+        error = insertError;
+      }
 
       if (error) throw error;
 
@@ -94,8 +132,8 @@ export default function Assignments() {
       setFormData({ title: '', description: '', due_date: '', max_points: 100, session_id: '' });
       fetchData();
     } catch (err) {
-      console.error('Error creating assignment:', err);
-      alert('Failed to create assignment. Please make sure the assignments table exists in your database.');
+      console.error('Error saving assignment:', err);
+      alert('Failed to save assignment. Please make sure the assignments table exists in your database.');
     } finally {
       setSubmitting(false);
     }
@@ -123,7 +161,7 @@ export default function Assignments() {
         </div>
 
         <button 
-          onClick={() => setShowModal(true)}
+          onClick={openNewModal}
           className="btn-primary"
         >
           <Plus size={18} className="mr-2" />
@@ -169,7 +207,7 @@ export default function Assignments() {
             </p>
           </div>
           <button 
-            onClick={() => setShowModal(true)}
+            onClick={openNewModal}
             className="btn-secondary mt-4"
           >
             Create Your First Assignment
@@ -180,13 +218,23 @@ export default function Assignments() {
           {assignments.map((assignment) => (
             <div key={assignment.id} className="card border-subtle hover:border-accent-glow transition-all group p-6 space-y-4 flex flex-col">
               <div className="flex justify-between items-start">
-                <span className="px-2 py-0.5 rounded-md bg-accent-glow/10 text-accent-glow text-[10px] font-bold uppercase tracking-wider">
-                  {assignment.status}
-                </span>
-                <span className="text-xs text-tertiary flex items-center">
-                  <Calendar size={12} className="mr-1" />
-                  Due: {new Date(assignment.due_date).toLocaleDateString()}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="px-2 py-0.5 rounded-md bg-accent-glow/10 text-accent-glow text-[10px] font-bold uppercase tracking-wider">
+                    {assignment.status}
+                  </span>
+                  <span className="text-xs text-tertiary flex items-center">
+                    <Calendar size={12} className="mr-1" />
+                    Due: {new Date(assignment.due_date).toLocaleDateString()}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleEdit(assignment)} className="p-1.5 text-tertiary hover:text-accent-glow bg-surface-inset rounded-md transition-colors" title="Edit">
+                    <Edit2 size={14} />
+                  </button>
+                  <button onClick={() => handleDelete(assignment.id)} className="p-1.5 text-tertiary hover:text-rose-500 bg-surface-inset rounded-md transition-colors" title="Delete">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
               
               <div className="flex-1">
@@ -225,13 +273,13 @@ export default function Assignments() {
           <div className="absolute inset-0 bg-void/80 backdrop-blur-sm" onClick={() => setShowModal(false)} />
           <div className="relative bg-surface-raised border border-strong rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-subtle flex justify-between items-center">
-              <h3 className="text-xl font-bold text-primary">New Assignment</h3>
+              <h3 className="text-xl font-bold text-primary">{formData.id ? 'Edit Assignment' : 'New Assignment'}</h3>
               <button onClick={() => setShowModal(false)} className="p-2 hover:bg-surface-inset rounded-lg transition-colors">
                 <X size={20} />
               </button>
             </div>
             
-            <form onSubmit={handleCreate} className="p-6 space-y-5">
+            <form onSubmit={handleSave} className="p-6 space-y-5">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-tertiary uppercase tracking-widest">Title</label>
                 <input 
@@ -315,9 +363,9 @@ export default function Assignments() {
                   {submitting ? (
                     <>
                       <Loader2 size={18} className="animate-spin" />
-                      Creating...
+                      Saving...
                     </>
-                  ) : 'Create Assignment'}
+                  ) : (formData.id ? 'Save Changes' : 'Create Assignment')}
                 </button>
               </div>
             </form>

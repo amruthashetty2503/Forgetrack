@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Users, Calendar, AlertTriangle, TrendingUp, ArrowRight, CheckCircle, Clock } from 'lucide-react';
+import { Users, Calendar, AlertTriangle, TrendingUp, ArrowRight, CheckCircle, Clock, Trash2, AlertOctagon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -71,6 +71,42 @@ export default function Dashboard() {
 
     } catch (err) {
       console.error('Dashboard fetch error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearSessions = async () => {
+    if (!window.confirm('Are you sure you want to delete all sessions and attendance records? This cannot be undone.')) return;
+    try {
+      setLoading(true);
+      await supabase.from('assignments').update({ session_id: null }).neq('id', 0);
+      await supabase.from('attendance').delete().neq('id', 0); 
+      await supabase.from('sessions').delete().neq('id', 0); 
+      await fetchDashboardData();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to clear sessions');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearAllData = async () => {
+    if (!window.confirm('⚠️ EXTREME WARNING ⚠️\n\nAre you sure you want to delete ALL students, sessions, assignments, and attendance? This will completely wipe your cohort data.')) return;
+    try {
+      setLoading(true);
+      await supabase.from('users').update({ student_id: null }).not('student_id', 'is', null);
+      await supabase.from('attendance').delete().neq('id', 0);
+      await supabase.from('assignments').delete().neq('id', 0);
+      await supabase.from('materials').delete().neq('id', 0);
+      await supabase.from('sessions').delete().neq('id', 0);
+      await supabase.from('users').delete().eq('role', 'student');
+      await supabase.from('students').delete().neq('id', 0);
+      await fetchDashboardData();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to clear all data');
     } finally {
       setLoading(false);
     }
@@ -247,6 +283,44 @@ export default function Dashboard() {
           >
             Manage All Assignments
           </button>
+        </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div className="card border-rose-500/30 bg-rose-500/5 p-8 space-y-6 mt-8">
+        <div className="flex items-center gap-3 text-rose-500">
+          <AlertOctagon size={24} />
+          <h3 className="text-xl font-bold uppercase tracking-widest">Danger Zone</h3>
+        </div>
+        <p className="text-sm text-secondary">
+          Destructive actions to reset your cohort data. Please be extremely careful as these actions cannot be undone.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-5 rounded-xl border border-rose-500/20 bg-surface-raised flex flex-col justify-between gap-4">
+            <div>
+              <h4 className="font-bold text-primary text-sm">Clear Sessions & Attendance</h4>
+              <p className="text-xs text-tertiary mt-1">Keeps students and assignments, but wipes all scheduled sessions and attendance records.</p>
+            </div>
+            <button 
+              onClick={handleClearSessions}
+              className="px-4 py-2 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg font-bold text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2 self-start"
+            >
+              <Trash2 size={14} /> Clear Sessions
+            </button>
+          </div>
+          
+          <div className="p-5 rounded-xl border border-rose-500/30 bg-surface-raised flex flex-col justify-between gap-4">
+            <div>
+              <h4 className="font-bold text-rose-400 text-sm">Full Cohort Wipe</h4>
+              <p className="text-xs text-tertiary mt-1">Deletes EVERYTHING. All students, sessions, assignments, and attendance records will be permanently erased.</p>
+            </div>
+            <button 
+              onClick={handleClearAllData}
+              className="px-4 py-2 bg-rose-500 text-white hover:bg-rose-600 rounded-lg font-bold text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2 self-start shadow-lg shadow-rose-500/20"
+            >
+              <Trash2 size={14} /> Delete All User Data
+            </button>
+          </div>
         </div>
       </div>
     </div>

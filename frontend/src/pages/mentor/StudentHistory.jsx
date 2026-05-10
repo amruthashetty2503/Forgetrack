@@ -91,7 +91,7 @@ export default function StudentHistory() {
 
   const filteredStudents = students.filter(s => {
     const matchesSearch = s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          s.usn.toLowerCase().includes(searchTerm.toLowerCase());
+                          (s.usn && s.usn.toLowerCase().includes(searchTerm.toLowerCase()));
     if (!matchesSearch) return false;
     
     const percentage = getPercentage(s.id);

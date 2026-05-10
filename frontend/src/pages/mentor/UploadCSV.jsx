@@ -204,7 +204,8 @@ Tasks:
 1. Find which header contains the student USN/ID (like "4SF24CI005").
 2. Find which header contains the student Name.
 3. Find which header contains the Branch/Department code.
-4. Find all headers that represent attendance dates/sessions (columns with P/A/1/0 values).
+4. Find which header contains the student Email address.
+5. Find all headers that represent attendance dates/sessions (columns with P/A/1/0 values).
    The program spans from 2025 to 2026. For each session, determine the date in YYYY-MM-DD format.
 
 Return ONLY valid JSON:
@@ -212,6 +213,7 @@ Return ONLY valid JSON:
   "usn": "exact header string",
   "name": "exact header string", 
   "branch": "exact header string",
+  "email": "exact header string",
   "sessions": [
     { "col": "exact header string", "date": "YYYY-MM-DD" }
   ],
@@ -223,12 +225,12 @@ Return ONLY valid JSON:
       const cleaned = text.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleaned);
 
-      setMapping({ 
-        usn: parsed.usn || '', 
-        name: parsed.name || '', 
-        branch: parsed.branch || '',
-        email: parsed.email || '' 
-      });
+      setMapping(prev => ({ 
+        usn: parsed.usn || prev.usn || '', 
+        name: parsed.name || prev.name || '', 
+        branch: parsed.branch || prev.branch || '',
+        email: parsed.email || prev.email || '' 
+      }));
       
       // Filter AI sessions to only include actual valid columns
       const validAiSessions = (parsed.sessions || []).filter(s => 
@@ -308,7 +310,9 @@ Return ONLY valid JSON:
       const { data: existingStudents } = await supabase
         .from('students').select('id, usn').in('usn', fileUSNs);
       const usnMap = {};
-      existingStudents?.forEach(s => { usnMap[s.usn.toUpperCase()] = s.id; });
+      existingStudents?.forEach(s => { 
+        if (s.usn) usnMap[s.usn.toUpperCase()] = s.id; 
+      });
 
       // ── 3. Batch-create missing students & Sync emails ───────────────────────
       const missingUSNs = fileUSNs.filter(u => !usnMap[u]);
@@ -318,22 +322,26 @@ Return ONLY valid JSON:
           const rowIndex = rowToUsn.indexOf(usn);
           const row = validRows[rowIndex];
           return {
-            usn,
+            _originalUsn: usn,
+            usn: usn,
             name: row?.[nameColIdx]?.toString().trim() || usn,
             email: (emailColIdx !== -1 && row?.[emailColIdx]) ? row[emailColIdx].toString().trim() : null,
             branch_code: row?.[branchColIdx]?.toString().trim() || 'N/A',
           };
         });
 
-        // Insert in chunks of 100
-        for (let i = 0; i < newStudents.length; i += 100) {
-          const chunk = newStudents.slice(i, i + 100);
+        // Insert individually to identify the exact record causing the conflict
+        for (const student of newStudents) {
+          const { _originalUsn, ...dbStudent } = student;
           const { data: created, error } = await supabase
-            .from('students').insert(chunk).select('id, usn');
+            .from('students').insert([dbStudent]).select('id');
+            
           if (error) {
-            warnings.push(`Student batch create error: ${error.message}`);
-          } else {
-            created?.forEach(s => { usnMap[s.usn.toUpperCase()] = s.id; });
+            const errorMsg = `Error for student ${dbStudent.name} (${dbStudent.usn || 'No USN'}): ${error.message}`;
+            warnings.push(errorMsg);
+            console.error(errorMsg, dbStudent);
+          } else if (created && created[0]) {
+            usnMap[_originalUsn] = created[0].id;
           }
         }
       }
